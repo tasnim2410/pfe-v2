@@ -1,0 +1,7 @@
+.tabTrigger {
+  transition: background 0.2s, color 0.2s;
+}
+.tabTriggerInactive:hover {
+  background: #BDD248 !important;
+  color: #111 !important;
+}
