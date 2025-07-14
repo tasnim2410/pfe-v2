@@ -1709,12 +1709,15 @@ def create_app():
             with app.app_context():
                 db.create_all()
             patents_added = fetch_and_store_originality_data(limit=limit)
+            # How many patents are in the DB now (valid for originality-rate calc)?
+            _, _, valid_patents = calculate_originality_rate_from_db()
 
             print(f"[{datetime.utcnow()}] Request ID: {request_id} - Fetch completed")
             return jsonify({
                 "status": "success",
                 "message": f"Originality data fetched and stored (limit={limit}).",
                 "patents_added": patents_added,
+                "processed_patents": valid_patents, 
                 "request_id": request_id
             }), 200
         except Exception as e:
@@ -2402,6 +2405,66 @@ def create_app():
         except Exception as e:
             return jsonify({'error': str(e)}), 500
         
+       
+    @app.route('/api/family_member_counts', methods=['GET'])
+    def family_member_counts():
+        """
+        Aggregate family-member jurisdictions and return a payload ready
+        for a bar-chart in the frontend.
+
+        Response shape
+        --------------
+        {
+          "labels":   ["US", "EP", "JP", ...],
+          "datasets": [{
+              "label": "Family Member Count",
+              "data":  [123, 87, 66, ...]
+          }]
+        }
+        """
+        try:
+            # 1️⃣ Pull the array column we created during family-scraping
+            query = text(
+                'SELECT family_jurisdictions '
+                'FROM raw_patents '
+                'WHERE family_jurisdictions IS NOT NULL'
+            )
+            df = pd.read_sql(query, engine)
+
+            if df.empty:
+                # No data yet – return an empty chart
+                return jsonify({"labels": [], "datasets": []}), 200
+
+            # 2️⃣ Ensure each cell is a *list* (they may be stored as strings)
+            df['country_codes'] = df['family_jurisdictions'].apply(
+                lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+            )
+
+            # 3️⃣ Re-use the helper in family_analysis.py
+            counts_df = get_family_counts_by_country(df[['country_codes']])
+
+            # 4️⃣ Shape the JSON for the React / Chart.js components
+            labels = counts_df['country_code'].tolist()
+            counts = counts_df['member_count'].tolist()
+
+            return jsonify({
+                "labels": labels,
+                "datasets": [{
+                    "label": "Family Member Count",
+                    "data": counts
+                }]
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Error in /api/family_member_counts: {e}")
+            return jsonify({"error": str(e)}), 500
+#  <<< NEW ────────────────────────────────────────────────────────────────
+
+        
+        
+        
+        
+        
         
         
         
@@ -2454,6 +2517,11 @@ def create_app():
                 "vnd.openxmlformats-officedocument.presentationml.presentation"
             )
         )
+        
+        
+        
+        
+        
 
 
     return app
