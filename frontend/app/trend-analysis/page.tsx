@@ -17,6 +17,7 @@ import TopKeywords from "@/components/top_10_keywords";
 import PatentFieldTrends from "@/components/patent_by_field";
 import CooccurrenceTrends from "@/components/co-occurunece_trend";
 import ApplicantCollaborationNetwork from "@/components/collaboration_network";
+import OriginalityRate from "@/components/originality_rate";
 
 const analysisCards = {
   patents: [
@@ -31,7 +32,8 @@ const analysisCards = {
         { id: "evolving-word-cloud", title: "Evolving Word Cloud" }, // Added
     { id: "cooccurrence-trends", title: "Co-occurrence Trends" },
     { id: "applicant-collaboration-network", title: "Applicant Collaboration Network" },
-  ],
+    { id: "originality-rate", title: "Originality Rate" },
+    ],
   research: [
     { id: "research-trend", title: "Research Publication Trend" },
     { id: "citation-analysis", title: "Citation Analysis" },
@@ -76,6 +78,29 @@ export default function TrendAnalysis() {
     setChartComments({ ...chartComments, [cardId]: comment });
   };
 
+  
+  // ────────────────────────────────────────────────────────────────
+  //  EXPAND / COLLAPSE ALL  (patent tab only)
+  // ────────────────────────────────────────────────────────────────
+  // IDs of every chart in the “Patent Analysis” tab
+  const allPatentIds = analysisCards.patents.map(c => c.id);
+
+  // Are *all* patent charts currently visible?
+  const allExpanded = allPatentIds.every(id => visibleCards.includes(id));
+
+  // Toggle handler
+  const toggleAllPatents = () => {
+    if (allExpanded) {
+      // Collapse → remove those IDs from the visible / selected arrays
+      setVisibleCards(vc => vc.filter(id => !allPatentIds.includes(id)));
+      setSelectedCharts(sc => sc.filter(id => !allPatentIds.includes(id)));
+    } else {
+      // Expand → add missing IDs (Set → unique)
+      setVisibleCards(vc => Array.from(new Set([...vc, ...allPatentIds])));
+      setSelectedCharts(sc => Array.from(new Set([...sc, ...allPatentIds])));
+    }
+  };
+
   const renderChart = (cardId: string) => {
     switch (cardId) {
       case "publication-trend":
@@ -106,6 +131,8 @@ export default function TrendAnalysis() {
         return <CooccurrenceTrends />;
       case "applicant-collaboration-network":
         return <ApplicantCollaborationNetwork />;
+      case "originality-rate":
+        return <OriginalityRate />;
       default:
         return (
           <div className="flex items-center justify-center h-64">
@@ -129,6 +156,12 @@ export default function TrendAnalysis() {
         </TabsList>
 
         <TabsContent value="patents" className="space-y-4">
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={toggleAllPatents}
+            className="bg-[#BDD248] text-white hover:bg-[#546472] transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-gray-400">
+              {allExpanded ? "Collapse All" : "Expand All"}
+            </Button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
             {analysisCards.patents.map((card) => {
   const isTop10 = card.id === "top-10-applicants";

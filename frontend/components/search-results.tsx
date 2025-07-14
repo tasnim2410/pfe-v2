@@ -49,6 +49,21 @@ export function SearchResults({ hasSearched, results, loading }: SearchResultsPr
     setVisibleCards(visibleCards.filter((id) => id !== cardId))
   }
 
+  const allSummaryIds = summaryCards.map(c => c.id);           // every card ID in Summary
+  const allExpanded   = allSummaryIds.every(id => visibleCards.includes(id));
+
+  const toggleAllSummary = () => {
+    /* If all are visible → collapse them,
+       else → expand any that are still hidden. */
+    setVisibleCards(vc =>
+      allExpanded
+        ? vc.filter(id => !allSummaryIds.includes(id))               // collapse
+        : Array.from(new Set([...vc, ...allSummaryIds]))             // expand
+    );
+  };
+
+
+
   const renderCard = (card: any) => {
     switch (card.id) {
       case "ipstat":
@@ -150,30 +165,7 @@ export function SearchResults({ hasSearched, results, loading }: SearchResultsPr
             </CardContent>
           </Card>
         )
-      // case "market-size":
-      //   return (
-      //     <Card className="w-full relative">
-      //       <Button
-      //         variant="ghost"
-      //         size="sm"
-      //         className="absolute top-2 right-2 h-6 w-6 p-0 hover:bg-gray-100"
-      //         onClick={() => hideCard(card.id)}
-      //       >
-      //         <X className="h-4 w-4" />
-      //       </Button>
-      //       <CardHeader>
-      //         <CardTitle>Market Size</CardTitle>
-      //       </CardHeader>
-      //       <CardContent>
-      //         <div className="text-center space-y-2">
-      //           <div className="text-3xl font-bold text-blue-600">$12.22M</div>
-      //           <p className="text-sm text-gray-600">Total IP Value</p>
-      //           <div className="text-lg font-semibold text-green-600">+24.5%</div>
-      //           <p className="text-xs text-gray-500">Year over year growth</p>
-      //         </div>
-      //       </CardContent>
-      //     </Card>
-      //   )
+
       case "investment":
         return (
           <Card className="w-full relative">
@@ -407,6 +399,15 @@ export function SearchResults({ hasSearched, results, loading }: SearchResultsPr
       </TabsContent>
 
       <TabsContent value="summary" className="space-y-4">
+      <div className="flex justify-end">
+          <Button
+            onClick={toggleAllSummary}
+            className="bg-[#BDD248] text-white hover:bg-[#546472] transition-colors duration-150
+                       focus-visible:ring-2 focus-visible:ring-gray-400"
+          >
+            {allExpanded ? "Collapse All" : "Expand All"}
+          </Button>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {summaryCards.map((card) => (
             <div key={card.id}>

@@ -115,24 +115,22 @@ export const OriginalityRate: React.FC = () => {
           return;
         }
         // 2. Fetch the originality rate
-        return fetch(`http://localhost:${port}/api/originality_rate`)
-          .then((res) => res.json())
-          .then((json) => {
-            if (!isMounted) return;
-            if (json.originality_rate !== undefined) {
-              setOrigRate(json.originality_rate);
-            } else if (typeof json === "number") {
-              setOrigRate(json);
-            } else {
-              setError("Originality rate not available.");
-            }
-            setLoading(false);
-          });
-      })
-      .catch(() => {
-        if (isMounted) {
-          setError("Error fetching originality rate.");
-          setLoading(false);
+        try {
+          const res  = await fetch(`http://localhost:${port}/api/originality_rate`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+
+          if (!isMounted) return;
+          const rate = json?.originality_rate ?? (typeof json === "number" ? json : null);
+          if (rate !== null) {
+            setOrigRate(rate);
+          } else {
+            setError("Originality rate not available.");
+          }
+        } catch (err) {
+          if (isMounted) setError("Error loading originality rate.");
+        } finally {
+          if (isMounted) setLoading(false); // ← always reached
         }
       });
 
