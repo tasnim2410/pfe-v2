@@ -20,6 +20,7 @@ import ApplicantCollaborationNetwork from "@/components/collaboration_network";
 import OriginalityRate from "@/components/originality_rate";
 import FamilyMemberCountChart from "@/components/family-member-count";
 import FamilySizeDistributionChart from "@/components/family-size-distribution";
+import InternationalProtectionMatrixChart from "@/components/international-protection-matrix";
 
 const analysisCards = {
   patents: [
@@ -37,6 +38,7 @@ const analysisCards = {
     { id: "originality-rate", title: "Originality Rate" },
     { id: "family-member-count", title: "Family Member Count" },
     { id: "family-size-distribution", title: "Family Size Distribution" },
+    { id: "international-protection-matrix", title: "International Protection Matrix" },
     ],
   research: [
     { id: "research-trend", title: "Research Publication Trend" },
@@ -141,6 +143,8 @@ export default function TrendAnalysis() {
         return <FamilyMemberCountChart />;
       case "family-size-distribution":
         return <FamilySizeDistributionChart />;
+      case "international-protection-matrix":
+        return <InternationalProtectionMatrixChart />;
       default:
         return (
           <div className="flex items-center justify-center h-64">

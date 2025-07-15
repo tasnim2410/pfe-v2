@@ -2522,6 +2522,97 @@ def create_app():
         except Exception as e:
             app.logger.error(f"Error in /api/family_size_distribution: {e}")
             return jsonify({"error": str(e)}), 500
+        
+        
+        
+        
+
+    @app.route('/api/international_protection_matrix', methods=['GET'])
+    def international_protection_matrix():
+        """
+        Returns a JSON payload describing, for each origin country
+        (first-publication country), how many family members were filed
+        in every other jurisdiction.
+
+        Response shape
+        --------------
+        {
+            "origins": ["US", "CN", "JP", ...],          # y-axis order (bottom → top)
+            "filings": ["US", "CN", "EP", ...],          # x-axis order (largest → smallest)
+            "matrix":  [                                 # counts[y][x]
+        [123, 45,  9, ...],     # US row
+        [ 67, 98, 10, ...],     # CN row
+        ...
+      ]
+        }
+    """
+        try:
+            # ── 1️⃣  Pull the two columns we need ───────────────────────────
+            query = text(
+            'SELECT first_publication_country AS origin_country, '
+            '       family_jurisdictions                       '
+            'FROM   raw_patents                                '
+            'WHERE  first_publication_country IS NOT NULL      '
+            '  AND  family_jurisdictions IS NOT NULL           '
+            '  AND  array_length(family_jurisdictions, 1) > 0'
+            )
+
+            df = pd.read_sql(query, engine)
+
+        # ── 2️⃣  If empty, run the heavy updater once & retry ───────────
+            if df.empty:
+                app.logger.info("family_jurisdictions empty → running updater")
+                update_family_members_ops()
+                df = pd.read_sql(query, engine)
+
+            if df.empty:
+                return jsonify({"origins": [], "filings": [], "matrix": []}), 200
+
+        # ── 3️⃣  Build relationships origin → filing ─────────────────────
+            df['family_list'] = df['family_jurisdictions'].apply(
+                lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+            )
+
+            records = []
+            for idx, row in df.iterrows():
+                for filing in row['family_list']:
+                    records.append({
+                        'origin_country': row['origin_country'],
+                        'filing_country': filing
+                    })
+
+            rel_df = pd.DataFrame(records)
+
+            grouped = (
+                rel_df
+                .groupby(['origin_country', 'filing_country'])
+                .size()
+                .reset_index(name='count')
+            )
+
+            pivot = (
+                grouped
+                .pivot(index='origin_country', columns='filing_country', values='count')
+                .fillna(0)
+            )
+
+        # ── 4️⃣  Sort filing columns by total desc & origin rows by total asc
+            pivot = pivot[pivot.sum(axis=0).sort_values(ascending=False).index]
+            pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=True).index]
+
+            origins = pivot.index.tolist()
+            filings = pivot.columns.tolist()
+            matrix  = pivot.astype(int).values.tolist()
+
+            return jsonify({
+                "origins": origins,
+                "filings": filings,
+                "matrix":  matrix
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Error in /api/international_protection_matrix: {e}")
+            return jsonify({"error": str(e)}), 500
 
 
         
