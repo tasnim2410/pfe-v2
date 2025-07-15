@@ -2406,59 +2406,129 @@ def create_app():
             return jsonify({'error': str(e)}), 500
         
        
+  
     @app.route('/api/family_member_counts', methods=['GET'])
     def family_member_counts():
         """
-        Aggregate family-member jurisdictions and return a payload ready
-        for a bar-chart in the frontend.
+        Returns a bar-chart payload of family-member counts per country.
 
-        Response shape
-        --------------
-        {
-          "labels":   ["US", "EP", "JP", ...],
-          "datasets": [{
-              "label": "Family Member Count",
-              "data":  [123, 87, 66, ...]
-          }]
-        }
+        Extra logic:
+        1️⃣ Read the most recent search keywords (same SQL used by
+           /api/last_search_keywords).
+        2️⃣ If none of those keywords appear in any patent title stored
+           in raw_patents, we call the EPO-OPS updater
+           (update_family_members_ops) to refresh the DB.
+        3️⃣ After the optional refresh, aggregate family_jurisdictions
+           exactly as before and shape the JSON for Chart.js.
         """
         try:
-            # 1️⃣ Pull the array column we created during family-scraping
+    # ───── 1️⃣  Read the column we care about ──────────────────────────
             query = text(
-                'SELECT family_jurisdictions '
-                'FROM raw_patents '
-                'WHERE family_jurisdictions IS NOT NULL'
-            )
+    'SELECT family_jurisdictions FROM raw_patents '
+    'WHERE family_jurisdictions IS NOT NULL '
+    '  AND array_length(family_jurisdictions, 1) > 0'
+)
             df = pd.read_sql(query, engine)
 
+    # ───── 2️⃣  If nothing there, run the heavy updater once ───────────
             if df.empty:
-                # No data yet – return an empty chart
+                app.logger.info("family_jurisdictions empty → running updater")
+                update_family_members_ops()
+                df = pd.read_sql(query, engine)      # retry
+
+    # ───── 3️⃣  Still empty? Just return blanks ────────────────────────
+            if df.empty:
                 return jsonify({"labels": [], "datasets": []}), 200
 
-            # 2️⃣ Ensure each cell is a *list* (they may be stored as strings)
+    # ───── 4️⃣  Aggregate for the bar-chart ────────────────────────────
             df['country_codes'] = df['family_jurisdictions'].apply(
                 lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-            )
+                    )
 
-            # 3️⃣ Re-use the helper in family_analysis.py
+            from family_analysis import get_family_counts_by_country
             counts_df = get_family_counts_by_country(df[['country_codes']])
 
-            # 4️⃣ Shape the JSON for the React / Chart.js components
-            labels = counts_df['country_code'].tolist()
-            counts = counts_df['member_count'].tolist()
-
             return jsonify({
-                "labels": labels,
-                "datasets": [{
-                    "label": "Family Member Count",
-                    "data": counts
-                }]
-            }), 200
+        "labels":   counts_df['country_code'].tolist(),
+        "datasets": [{
+            "label": "Family Member Count",
+            "data":  counts_df['member_count'].tolist()
+        }]
+    }), 200
 
         except Exception as e:
             app.logger.error(f"Error in /api/family_member_counts: {e}")
             return jsonify({"error": str(e)}), 500
-#  <<< NEW ────────────────────────────────────────────────────────────────
+        
+        
+        
+        
+    @app.route('/api/family_size_distribution', methods=['GET'])
+    def family_size_distribution():
+        """
+        Return a histogram-ready payload for the distribution of patent-family sizes
+        stored in raw_patents.
+
+        JSON shape
+        ----------
+        {
+            "labels":   [1, 2, 3, ...],      # family size buckets
+            "datasets": [{
+                "label": "Number of Families",
+                "data":  [432, 97, 26, ...]  # counts per bucket (same length)
+            }]
+        }
+        """
+        try:
+            # ── 1️⃣  Grab non-empty family_members arrays ───────────────────
+            query = text(
+                'SELECT family_members FROM raw_patents '
+                'WHERE family_members IS NOT NULL '
+                '  AND array_length(family_members, 1) > 0'
+            )
+            df = pd.read_sql(query, engine)
+
+            # ── 2️⃣  If DB has none, populate via the heavy updater ─────────
+            if df.empty:
+                app.logger.info("family_members empty → running updater")
+                update_family_members_ops()
+                df = pd.read_sql(query, engine)
+
+            # ── 3️⃣  Still empty? return blanks so UI can handle gracefully ─
+            if df.empty:
+                return jsonify({"labels": [], "datasets": []}), 200
+
+            # ── 4️⃣  Compute family_size per row and build histogram data ───
+            def _to_list(x):
+                # handle TEXT-stored arrays like '[US,EP]'
+                return ast.literal_eval(x) if isinstance(x, str) else x
+
+            df['family_size'] = df['family_members'].apply(_to_list).apply(len)
+
+            counts = (
+                df['family_size']
+                .value_counts()
+                .sort_index()       # ascending bucket order
+            )
+
+            return jsonify({
+                "labels":   counts.index.tolist(),   # [1,2,3,...]
+                "datasets": [{
+                    "label": "Number of Families",
+                    "data":  counts.values.tolist()
+                }]
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Error in /api/family_size_distribution: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+        
+        
+        
+
+
 
         
         
