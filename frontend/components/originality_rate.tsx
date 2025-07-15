@@ -341,7 +341,8 @@ function getStage(originalityRate: number) {
   return { ...STAGES[STAGES.length - 1], index: STAGES.length - 1 };
 }
 
-export const OriginalityDynamic: React.FC = () => {
+type ChartProps = { width?: number; height?: number };
+export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
   const [originalityRate, setOriginalityRate] = useState<number | null>(null);
   const [totalPatents, setTotalPatents] = useState<number | null>(null);
   const [validPatents, setValidPatents] = useState<number | null>(null);

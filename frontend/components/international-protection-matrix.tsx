@@ -8,21 +8,7 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
-// Material-inspired harmonious palette
-const palette = [
-  "#1976D2", // Blue
-  "#388E3C", // Green
-  "#FBC02D", // Amber
-  "#E64A19", // Deep Orange
-  "#7B1FA2", // Purple
-  "#0288D1", // Light Blue
-  "#C2185B", // Pink
-  "#00796B", // Teal
-  "#FFA000", // Orange
-  "#512DA8", // Deep Purple
-  "#303F9F", // Indigo
-  "#455A64", // Blue Grey
-];
+import { schemeTableau10, schemeSet3 } from "d3-scale-chromatic";
 
 // register once (needed by chart.js v3+)
 Chart.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend);
@@ -35,6 +21,7 @@ interface ApiResponse {
 }
 
 /* ---------- tiny colour helper ---------- */
+const palette = [...schemeTableau10, ...schemeSet3].flat(); // plenty distinct
 const colourFor = (idx: number) => palette[idx % palette.length];
 
 /* ---------- component ---------- */
@@ -78,7 +65,7 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
   }, [overridePort]);
 
   if (loading) return <div>Loading patent-protection matrix…</div>;
-  if (error)   return <div style={{ color: "#C2185B" }}>{error}</div>; // harmonized error color
+  if (error)   return <div style={{ color: "#EA3C53" }}>{error}</div>;
   if (!api)    return null;
 
   /* ---------- build chart.js structures ---------- */
@@ -109,12 +96,12 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
       },
       legend: {
         position: "right",
-        labels: { boxWidth: 14, color: "#263238" }, // blue-grey text
+        labels: { boxWidth: 14 },
       },
     },
     scales: {
-      x: { stacked: true, ticks: { color: "#263238" } }, // blue-grey axis
-      y: { stacked: true, ticks: { color: "#263238", font: { weight: 600 } } },
+      x: { stacked: true, ticks: { color: "#3B3C3D" } },
+      y: { stacked: true, ticks: { color: "#3B3C3D", font: { weight: 600 } } },
     },
   };
 
@@ -122,9 +109,9 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
   return (
     <div
       style={{
-        background: "#F7F7F7", // light grey background
+        background: "#fff",
         borderRadius: 18,
-        boxShadow: "0 2px 18px #1976D233", // blue shadow
+        boxShadow: "0 2px 18px #B2DBA422",
         padding: "0 16px 16px 16px",
         width: "100%",
         display: "flex",
@@ -137,11 +124,11 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
           padding: "8px 28px",
           fontWeight: 700,
           fontSize: 20,
-          background: "#1976D2",
+          background: "#232526",
           color: "#fff",
           borderRadius: 10,
           alignSelf: "center",
-          boxShadow: "0 1px 8px #1976D233",
+          boxShadow: "0 1px 8px #bdd24816",
         }}
       >
         International Patent Protection Strategy
@@ -151,7 +138,7 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
           textAlign: "center",
           marginTop: 4,
           fontSize: 13,
-          color: "#455A64", // blue-grey
+          color: "#666",
         }}
       >
         Origin countries and their international filing patterns

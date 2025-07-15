@@ -92,7 +92,8 @@ interface MarketMetrics {
   mean_value: number;
 }
 
-export const IpStatsBox: React.FC = () => {
+type ChartProps = { width?: number; height?: number };
+export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
   const [metrics, setMetrics] = useState<MarketMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
 

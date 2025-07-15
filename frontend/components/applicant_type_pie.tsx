@@ -18,7 +18,8 @@ type ApplicantSummary = {
   percentages: number[];
 };
 
-export const ApplicantTypePie: React.FC = () => {
+type ChartProps = { width?: number; height?: number };
+export const ApplicantTypePie: React.FC<ChartProps> = ({ width, height }) => {
   const [summary, setSummary] = useState<ApplicantSummary | null>(null);
   const [coapplicant, setCoapplicant] = useState<{coapplicant_count: number, coapplicant_rate: number, total_applications: number} | null>(null);
   const [loading, setLoading] = useState(true);

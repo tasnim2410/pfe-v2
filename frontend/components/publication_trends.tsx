@@ -19,7 +19,8 @@ const CHART_BG = "#fff";
 const ACCENT = "#232526";
 const HIGHLIGHT = "#BDD248";
 
-const PublicationTrends: React.FC = () => {
+type ChartProps = { width?: number; height?: number };
+const PublicationTrends: React.FC<ChartProps> = ({ width, height }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);

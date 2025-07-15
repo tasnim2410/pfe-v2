@@ -2526,6 +2526,10 @@ def create_app():
         
         
         
+        
+        
+        
+        
 
     @app.route('/api/international_protection_matrix', methods=['GET'])
     def international_protection_matrix():
@@ -2613,6 +2617,102 @@ def create_app():
         except Exception as e:
             app.logger.error(f"Error in /api/international_protection_matrix: {e}")
             return jsonify({"error": str(e)}), 500
+        
+        
+        
+        
+        
+        #  >>> NEW ────────────────────────────────────────────────────────────────
+    @app.route('/api/international_patent_flow', methods=['GET'])
+    def international_patent_flow():
+        """
+        Deliver a receiver-vs-origin matrix for the stacked horizontal
+        “International Patent Flow” bar-chart.
+
+        JSON shape
+        ----------
+        {
+            "receivers": ["US", "CN", "EP", ...],     # y-axis order (top→bottom)
+            "origins":   ["US", "CN", "JP", ...],     # legend / stack order
+            "matrix":    [                            # counts[row][col]
+                [731, 212,  65, ...],   # patents each receiver got from US, CN, JP…
+                [452, 530, 110, ...],   # row for CN, etc.
+                ...
+            ]
+        }
+    """
+        try:
+            # ── 1️⃣  Pull origin + family_jurisdictions ────────────────────
+            query = text(
+                'SELECT first_publication_country AS origin_country, '
+                '       family_jurisdictions                       '
+                'FROM   raw_patents                                '
+                'WHERE  first_publication_country IS NOT NULL      '
+                '  AND  family_jurisdictions IS NOT NULL           '
+                '  AND  array_length(family_jurisdictions, 1) > 0'
+            )
+            df = pd.read_sql(query, engine)
+
+        # ── 2️⃣  Auto-populate if column empty ──────────────────────────
+            if df.empty:
+                app.logger.info("family_jurisdictions empty → running updater")
+                update_family_members_ops()
+                df = pd.read_sql(query, engine)
+
+            if df.empty:
+                return jsonify({"receivers": [], "origins": [], "matrix": []}), 200
+
+        # ── 3️⃣  Build long-form receiver←origin relationships ─────────
+            df['family_list'] = df['family_jurisdictions'].apply(
+                lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+            )
+
+            rel_records = []
+            for idx, row in df.iterrows():
+                for receiver in row['family_list']:
+                    rel_records.append({
+                        'receiver_country': receiver,
+                        'origin_country':   row['origin_country']
+                    })
+
+            rel_df = pd.DataFrame(rel_records)
+
+        # ── 4️⃣  Aggregate & pivot  receiver × origin  ─────────────────
+            grouped = (
+                rel_df
+                .groupby(['receiver_country', 'origin_country'])
+                .size()
+                .reset_index(name='count')
+            )
+
+            pivot = (
+                grouped
+                .pivot(index='receiver_country', columns='origin_country', values='count')
+                .fillna(0)
+            )
+
+        # ── 5️⃣  Row order: receivers sorted by total (desc)  ──────────
+            pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
+
+        #      Column order: origins sorted by overall total (desc) so
+        #      biggest source stacks appear first (bottom of each bar)
+            pivot = pivot[pivot.sum(axis=0).sort_values(ascending=False).index]
+
+            receivers = pivot.index.tolist()
+            origins   = pivot.columns.tolist()
+            matrix    = pivot.astype(int).values.tolist()
+
+            return jsonify({
+                "receivers": receivers,
+                "origins":   origins,
+                "matrix":    matrix
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Error in /api/international_patent_flow: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
 
 
         
