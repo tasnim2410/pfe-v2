@@ -19,6 +19,7 @@ import CooccurrenceTrends from "@/components/co-occurunece_trend";
 import ApplicantCollaborationNetwork from "@/components/collaboration_network";
 import OriginalityRate from "@/components/originality_rate";
 import FamilyMemberCountChart from "@/components/family-member-count";
+import FamilySizeDistributionChart from "@/components/family-size-distribution";
 
 const analysisCards = {
   patents: [
@@ -35,6 +36,7 @@ const analysisCards = {
     { id: "applicant-collaboration-network", title: "Applicant Collaboration Network" },
     { id: "originality-rate", title: "Originality Rate" },
     { id: "family-member-count", title: "Family Member Count" },
+    { id: "family-size-distribution", title: "Family Size Distribution" },
     ],
   research: [
     { id: "research-trend", title: "Research Publication Trend" },
@@ -137,6 +139,8 @@ export default function TrendAnalysis() {
         return <OriginalityRate />;
       case "family-member-count":
         return <FamilyMemberCountChart />;
+      case "family-size-distribution":
+        return <FamilySizeDistributionChart />;
       default:
         return (
           <div className="flex items-center justify-center h-64">
