@@ -259,17 +259,25 @@ const AdvancedSearchBar: React.FC = () => {
   };
 
   // Optional: Function to format state for your endpoint
-  const getQueryForEndpoint = () => {
-    return {
-      query: {
-        group1: {
-          ...rootGroup,
-          keywords: rootGroup.children,
-          children: undefined,
-        },
-      },
-    };
+  // 🔧 Recursively replace `children` ➜ `keywords`
+const transformNode = (node: QueryNode): any => {
+  if (node.type === "keyword") return node;              // leaf stays unchanged
+
+  const grp = node as Group;
+  return {
+    type: "group",
+    operator: grp.operator,
+    keywords: grp.children.map(transformNode),            // recurse
   };
+};
+
+// Formats the payload exactly as the Flask endpoint expects
+const getQueryForEndpoint = () => ({
+  query: {
+    group1: transformNode(rootGroup),
+  },
+});
+
 
   // API integration
   const handleSearch = async () => {

@@ -2711,6 +2711,57 @@ def create_app():
         except Exception as e:
             app.logger.error(f"Error in /api/international_patent_flow: {e}")
             return jsonify({"error": str(e)}), 500
+        
+        
+        
+        @app.route('/api/geographical_distribution', methods=['GET'])
+        def geographical_distribution():
+            """
+            Returns the patent count per first_publication_country.
+
+            Example (top-3):
+            {
+              "labels": ["US", "JP", "CN"],
+              "datasets": [{
+                  "label": "Patent Count",
+                  "data": [120, 83, 57],
+                  "backgroundColor": "rgba(54, 162, 235, 0.7)"
+              }]
+            }
+            """
+            try:
+                # 1️⃣  Pull the country column from raw_patents
+                patents = RawPatent.query.with_entities(
+                    RawPatent.first_publication_country
+                ).all()                     # -> list of tuples [(“US”,), (“JP”,)…]
+
+                import pandas as pd
+                df = pd.DataFrame(
+                    [c for (c,) in patents if c]  # drop NULL / empty
+                    , columns=['country']
+                )
+
+                if df.empty:                       # defensive – avoid div/0 on fresh DB
+                    return jsonify({
+                        "labels": [],
+                        "datasets": [{"label": "Patent Count", "data": []}]
+                    }), 200
+
+                # 2️⃣  Aggregate & format for the card
+                counts = df['country'].value_counts()
+                result = {
+                    "labels": counts.index.tolist(),
+                    "datasets": [{
+                        "label": "Patent Count",
+                        "data": counts.values.tolist(),
+                        "backgroundColor": "rgba(54, 162, 235, 0.7)"
+                    }]
+                }
+                return jsonify(result), 200
+
+            except Exception as e:                 # ❸ standardised error handling
+                app.logger.error(f"Error in geographical_distribution: {e}")
+                return jsonify({"error": str(e)}), 500
 
 
 
