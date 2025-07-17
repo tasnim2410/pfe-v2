@@ -22,25 +22,27 @@ import FamilyMemberCountChart from "@/components/family-member-count";
 import FamilySizeDistributionChart from "@/components/family-size-distribution";
 import InternationalProtectionMatrixChart from "@/components/international-protection-matrix";
 import InternationalPatentFlowChart from "@/components/international-patent-flow";
+import GeographicalDistribution from "@/components/geographical_distribution";  
 
 const analysisCards = {
   patents: [
     { id: "applicant-analysis", title: "Applicant Type Analysis" },
     { id: "top-ipc", title: "Top IPC Codes" },
     { id: "publication-trend", title: "Publication Trend" },
-    { id: "geographic-distribution", title: "Geographic Distribution" },
-    { id: "ip-stats", title: "IP Stats" },
+
+    // { id: "ip-stats", title: "IP Stats" },
     { id: "top-10-applicants", title: "Top 10 Patent Applicants" },
     { id: "top-10-keywords", title: "Top 10 Keywords" },
     { id: "patent-field-trends", title: "Patent Field Trends" },
-        { id: "evolving-word-cloud", title: "Evolving Word Cloud" }, // Added
+    { id: "evolving-word-cloud", title: "Evolving Word Cloud" }, // Added
     { id: "cooccurrence-trends", title: "Co-occurrence Trends" },
     { id: "applicant-collaboration-network", title: "Applicant Collaboration Network" },
-    { id: "originality-rate", title: "Originality Rate" },
+    // { id: "originality-rate", title: "Originality Rate" },
     { id: "family-member-count", title: "Family Member Count" },
     { id: "family-size-distribution", title: "Family Size Distribution" },
     { id: "international-protection-matrix", title: "International Protection Matrix" },
     { id: "international-patent-flow", title: "International Patent Flow" },
+    { id: "geographic-distribution", title: "Geographic Distribution" },
     ],
   research: [
     { id: "research-trend", title: "Research Publication Trend" },
@@ -119,12 +121,12 @@ export default function TrendAnalysis() {
             <ApplicantTypePie />
           </div>
         );
-      case "ip-stats":
-        return (
-          <div className="flex justify-center items-center w-full h-full">
-            <IpStatsBox />
-          </div>
-        );
+      // case "ip-stats":
+      //   return (
+      //     <div className="flex justify-center items-center w-full h-full">
+      //       <IpStatsBox />
+      //     </div>
+      //   );
       case "top-ipc":
         return <TopIPCCodes />;
       case "top-10-applicants":
@@ -139,8 +141,8 @@ export default function TrendAnalysis() {
         return <CooccurrenceTrends />;
       case "applicant-collaboration-network":
         return <ApplicantCollaborationNetwork />;
-      case "originality-rate":
-        return <OriginalityRate />;
+      // case "originality-rate":
+      //   return <OriginalityRate />;
       case "family-member-count":
         return <FamilyMemberCountChart />;
       case "family-size-distribution":
@@ -149,6 +151,8 @@ export default function TrendAnalysis() {
         return <InternationalProtectionMatrixChart />;
       case "international-patent-flow":
         return <InternationalPatentFlowChart />;
+      case "geographic-distribution":
+        return <GeographicalDistribution />;
       default:
         return (
           <div className="flex items-center justify-center h-64">

@@ -2714,12 +2714,12 @@ def create_app():
         
         
         
-        @app.route('/api/geographical_distribution', methods=['GET'])
-        def geographical_distribution():
-            """
-            Returns the patent count per first_publication_country.
+    @app.route('/api/geographical_distribution', methods=['GET'])
+    def geographical_distribution():
+        """
+        Returns the patent count per first_publication_country.
 
-            Example (top-3):
+        Example (top-3):
             {
               "labels": ["US", "JP", "CN"],
               "datasets": [{
@@ -2728,40 +2728,40 @@ def create_app():
                   "backgroundColor": "rgba(54, 162, 235, 0.7)"
               }]
             }
-            """
-            try:
-                # 1️⃣  Pull the country column from raw_patents
-                patents = RawPatent.query.with_entities(
-                    RawPatent.first_publication_country
-                ).all()                     # -> list of tuples [(“US”,), (“JP”,)…]
+        """
+        try:
+            # 1️⃣  Pull the country column from raw_patents
+            patents = RawPatent.query.with_entities(
+                RawPatent.first_publication_country
+            ).all()                     # -> list of tuples [(“US”,), (“JP”,)…]
 
-                import pandas as pd
-                df = pd.DataFrame(
-                    [c for (c,) in patents if c]  # drop NULL / empty
-                    , columns=['country']
-                )
+            import pandas as pd
+            df = pd.DataFrame(
+                [c for (c,) in patents if c]  # drop NULL / empty
+                , columns=['country']
+            )
 
-                if df.empty:                       # defensive – avoid div/0 on fresh DB
-                    return jsonify({
-                        "labels": [],
-                        "datasets": [{"label": "Patent Count", "data": []}]
-                    }), 200
+            if df.empty:                       # defensive – avoid div/0 on fresh DB
+                return jsonify({
+                    "labels": [],
+                    "datasets": [{"label": "Patent Count", "data": []}]
+                }), 200
 
-                # 2️⃣  Aggregate & format for the card
-                counts = df['country'].value_counts()
-                result = {
-                    "labels": counts.index.tolist(),
-                    "datasets": [{
-                        "label": "Patent Count",
-                        "data": counts.values.tolist(),
-                        "backgroundColor": "rgba(54, 162, 235, 0.7)"
-                    }]
-                }
-                return jsonify(result), 200
+            # 2️⃣  Aggregate & format for the card
+            counts = df['country'].value_counts()
+            result = {
+                "labels": counts.index.tolist(),
+                "datasets": [{
+                    "label": "Patent Count",
+                    "data": counts.values.tolist(),
+                    "backgroundColor": "rgba(54, 162, 235, 0.7)"
+                }]
+            }
+            return jsonify(result), 200
 
-            except Exception as e:                 # ❸ standardised error handling
-                app.logger.error(f"Error in geographical_distribution: {e}")
-                return jsonify({"error": str(e)}), 500
+        except Exception as e:                 # ❸ standardised error handling
+            app.logger.error(f"Error in geographical_distribution: {e}")
+            return jsonify({"error": str(e)}), 500
 
 
 
