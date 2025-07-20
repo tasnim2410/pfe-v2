@@ -87,18 +87,34 @@ const ThemeByTimeWindow: React.FC = () => {
       try {
         const portRes = await fetch("/backend_port.txt");
         const port = (await portRes.text()).trim();
+        const endpoints = [
+          `/api/processed_texts`,
+          `/api/topic_evolution`,
+          `/api/automatic_topic_shift`
+        ];
+        // Sequentially fetch each required endpoint
+        for (let ep of endpoints) {
+          const res = await fetch(`http://localhost:${port}${ep}`);
+          if (!res.ok) throw new Error(`Failed to fetch ${ep}`);
+        }
+        // Now fetch the weighted word clouds
         const apiRes = await fetch(`http://localhost:${port}/api/weighted_word_clouds`);
-        if (!apiRes.ok) throw new Error();
+        if (!apiRes.ok) throw new Error("Failed to fetch weighted word clouds");
         const json = await apiRes.json();
         if (!cancelled) setData(json);
         setLoading(false);
-      } catch {
-        setErr("Failed to fetch topic data. Is the backend running?");
+      } catch (err: any) {
+        setErr(
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to fetch topic data. Is the backend running?"
+        );
         setLoading(false);
       }
     };
     load();
     return () => { cancelled = true; };
+
   }, []);
 
   if (loading) return <LoadingSpinner text="Loading Evolving Word Cloud..." />;

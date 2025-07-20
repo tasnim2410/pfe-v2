@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { ExternalLink, X } from "lucide-react"
+import MarketStrategyCard from "./market_strategy";
+import MarketSizeCard from "./market_size";
 
 interface SearchResultsProps {
   hasSearched: boolean;
@@ -15,14 +17,14 @@ interface SearchResultsProps {
 }
 
 const summaryCards = [
-  { id: "ipstat", title: "IP Stats", description: "Intellectual Property Market Metrics" },
-  { id: "innovation", title: "Innovation Cycle", description: "Technology lifecycle analysis" },
-  { id: "market-strategy", title: "Market Strategy", description: "Strategic market insights" },
-  // { id: "market-size", title: "Market Size", description: "Market valuation analysis" },
-  { id: "investment", title: "Investment Dynamic", description: "Investment trend analysis" },
-  { id: "summary", title: "Analysis Summary", description: "Comprehensive overview" },
-  { id: "originality", title: "Originality Rate", description: "Analysis of patent originality" },
-]
+  /* left column first row  */ { id: "market-size",      title: "Market Size",        description: "Market valuation analysis" },
+  /* centre column first row*/ { id: "ipstat",           title: "IP Stats",           description: "Intellectual-property metrics" },
+  /* right column first row */ { id: "investment",       title: "Investment Dynamic", description: "Investment trend analysis" },
+  /* left column second row */ { id: "market-strategy",  title: "Market Strategy",    description: "Strategic market insights" },
+  /* centre column second row*/{ id: "innovation",       title: "Innovation Cycle",   description: "Technology lifecycle" },
+  /* right column second row*/ { id: "originality",      title: "Originality Rate",   description: "Patent originality" },
+  /* full-width last row    */{ id: "summary",          title: "Analysis Summary",   description: "Comprehensive overview" },
+];
 
 // No more mockPatents; using real API results
 
@@ -147,21 +149,30 @@ export function SearchResults({ hasSearched, results, loading }: SearchResultsPr
             <CardHeader>
               <CardTitle>Market Strategy</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3" id={`chart-${card.id}`}>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Market Position</span>
-                  <span className="font-semibold">Strong</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Competitive Advantage</span>
-                  <span className="font-semibold">High</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Growth Potential</span>
-                  <span className="font-semibold">Expanding</span>
-                </div>
-              </div>
+            <CardContent className="flex items-center justify-center w-full p-2" id={`chart-${card.id}`}>
+              <MarketStrategyCard level="global"/>
+            </CardContent>
+          </Card>
+        )
+
+      case "market-size":
+        return (
+          <Card className="w-full relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute top-2 right-2 h-6 w-6 p-0 hover:bg-gray-100"
+              onClick={() => hideCard(card.id)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            <CardHeader>
+              <CardTitle>Market Size</CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-center justify-center w-full p-2" id={`chart-${card.id}`}>
+              <React.Suspense fallback={<LoadingSpinner text="Loading market size..." size={28} height={60} />}>
+                <MarketSizeCard size="big" />
+              </React.Suspense>
             </CardContent>
           </Card>
         )
@@ -408,9 +419,14 @@ export function SearchResults({ hasSearched, results, loading }: SearchResultsPr
             {allExpanded ? "Collapse All" : "Expand All"}
           </Button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 auto-rows-auto">
           {summaryCards.map((card) => (
-            <div key={card.id}>
+            <div
+            key={card.id}
+            className={`${
+              card.id === "summary" ? "md:col-span-3" : ""   // ⬅ full width on desktops
+            }`}
+          >
               {!visibleCards.includes(card.id) ? (
                 <Button
                   variant="outline"
