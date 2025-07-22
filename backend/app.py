@@ -97,6 +97,9 @@ from pptx import Presentation
 from pptx.util import Inches
 import io
 import base64
+from ops_search import json_to_cql, fetch_to_dataframe
+import pandas as pd
+from db import db, PatentOPS        # ← add PatentOPS here
 
 
 class ServerThread(threading.Thread):
@@ -140,6 +143,57 @@ def create_app():
     @app.route('/')
     def home():
       return 'app is running!', 200
+  
+  
+  
+  # ---------- BEGIN NEW ENDPOINT ----------
+    @app.route('/api/search_ops', methods=['POST'])
+    def search_patents_ops():
+        """
+        Call EPO-OPS biblio search, return a DataFrame-like JSON.
+
+        Body:
+        {
+            "query_input": { …same JSON you already build… },
+            "max_results": 250          # optional, default 500
+        }
+        """
+        data = request.get_json(silent=True) or {}
+        q_input     = data.get("query_input")
+        max_results = int(data.get("max_results", 500))
+        if not q_input:
+            return jsonify({"error": "provide 'query_input' JSON"}), 400
+        try:
+            cql = json_to_cql(q_input)
+        except Exception as e:
+            return jsonify({"error": f"Bad query JSON: {e}"}), 400
+
+        try:
+            df = fetch_to_dataframe(cql, max_records=max_results)
+        except Exception as e:
+            return jsonify({"error": f"OPS request failed: {e}"}), 502
+
+        try:
+            df, total_cnt = fetch_to_dataframe(cql, max_records=max_results)
+        except Exception as e:
+            return jsonify({"error": f"OPS request failed: {e}"}), 502
+
+        if df.empty:
+            return jsonify({"error": "no results"}), 404
+
+# ⬇️  (rest stays the same)  ⬇️
+        records = df.where(pd.notnull(df), None).to_dict(orient="records")
+        db.session.query(PatentOPS).delete()
+        db.session.bulk_insert_mappings(PatentOPS, records)
+        db.session.commit()
+
+        return jsonify({
+            "rows": len(records),
+            "total_results": total_cnt,
+            "data": records
+        }), 200
+
+
   
     @app.route('/api/last_search_keywords', methods=['GET'])
     def get_last_search_keywords():
@@ -364,7 +418,7 @@ def create_app():
             db_manager = DatabaseManager()
             scraper = EspacenetScraper(
                 search_keywords=None,
-                headless=True
+                headless=True,
             )
            
             try:

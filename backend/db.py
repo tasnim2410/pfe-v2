@@ -425,3 +425,23 @@ class PatentCost(db.Model):
             'country': self.country,
             'cost': self.cost
         }
+        
+        
+        
+class PatentOPS(db.Model):
+    __tablename__ = "patent_ops"
+    id                 = db.Column(db.Integer, primary_key=True)
+    family_id          = db.Column(db.BigInteger, index=True)
+    title              = db.Column(db.Text, nullable=True)          # ← was False
+    applicants         = db.Column(db.Text, nullable=True)
+    inventors          = db.Column(db.Text, nullable=True)
+    publication_number = db.Column(db.String(80), index=True, nullable=True)
+    publication_date   = db.Column(db.Date, nullable=True)
+    ipc                = db.Column(db.Text, nullable=True)
+    cpc                = db.Column(db.Text, nullable=True)
+    earliest_priority  = db.Column(db.Date, nullable=True)
+    app_country        = db.Column(db.String(2), nullable=True)
+    is_active          = db.Column(db.Boolean)
+
+    def to_dict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}

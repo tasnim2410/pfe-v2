@@ -310,19 +310,15 @@ class EspacenetScraper:
         options = uc.ChromeOptions()
         
         if headless:
-            options.add_argument('--headless=new')  # Use new headless mode (more stable)
+            options.add_argument('--headless=new')             # modern headless mode
+            options.add_argument('--window-size=1920,1080')    # wide viewport so UI loads fully
             options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_argument('--no-sandbox')  # Required for some headless environments
-            options.add_argument('--disable-dev-shm-usage')  # Avoid shared memory issues
-            # Set a realistic user-agent
+            options.add_argument('--no-sandbox')               # needed in some CI / container envs
+            options.add_argument('--disable-dev-shm-usage')    # avoid shared-memory issues
             options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-            # Disable automation extensions
-            options.add_argument('--disable-extensions')
-            options.add_argument('--disable-gpu')  # Optional, reduces GPU usage
-            
-
-
-            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--disable-extensions')       # drop automation extensions
+            options.add_argument('--disable-gpu')              # optional – saves GPU resources
+        
         self.driver = uc.Chrome(options=options)
         self.driver.set_page_load_timeout(30)
         self.driver.set_window_size(1600, 1300)

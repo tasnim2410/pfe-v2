@@ -20,7 +20,11 @@ FRENCH_STOP_WORDS = set([
     "such", "into", "only", "no", "not", "any", "some", "more", "other", "what", "which",
     "their", "through", "about", "between", "after", "before", "while", "during", "under",
     "within", "without", "upon", "why", "how", "many", "most", "these", "those", "then",
-    "there", "just", "now", "also", "very", "much", "well", "make", "made", "using", "based"
+    "there", "just", "now", "also", "very", "much", "well", "make", "made", "using", "based",
+    "new", "old", "first", "last", "next", "last", "long", "short", "high", "low", "big",
+    "small", "good", "bad", "right", "left", "top", "bottom", "same", "different", "same", "different", "like", "such", "more", "less",
+    "most", "least", "best", "worst", "better", "worse", "great", "greater", "lesser", "least",
+    "important", "important", "interesting", "interested", "useful", "used", "use", "using", "used", "using" ,"thereof", "therefore", "thus", "hence", "because", "since", "although", "though", "if", "unless", "until", "while", "whereas"
 ])
 CUSTOM_STOPWORDS = ENGLISH_STOP_WORDS.union(FRENCH_STOP_WORDS)
 def clean_text_remove_stopwords(text):

@@ -34,15 +34,17 @@ const analysisCards = {
     { id: "top-10-applicants", title: "Top 10 Patent Applicants" },
     { id: "top-10-keywords", title: "Top 10 Keywords" },
     { id: "patent-field-trends", title: "Patent Field Trends" },
-    { id: "evolving-word-cloud", title: "Evolving Word Cloud" }, // Added
+    { id: "evolving-word-cloud", title: "Keyword Momentum" }, // Added
     { id: "cooccurrence-trends", title: "Co-occurrence Trends" },
     { id: "applicant-collaboration-network", title: "Applicant Collaboration Network" },
     // { id: "originality-rate", title: "Originality Rate" },
-    { id: "family-member-count", title: "Family Member Count" },
-    { id: "family-size-distribution", title: "Family Size Distribution" },
+    { id: "geographic-distribution", title: "Geographic Distribution" },
+    
     { id: "international-protection-matrix", title: "International Protection Matrix" },
     { id: "international-patent-flow", title: "International Patent Flow" },
-    { id: "geographic-distribution", title: "Geographic Distribution" },
+    { id: "family-size-distribution", title: "Family Size Distribution" },
+    { id: "family-member-count", title: "Family Member Count" },
+    
     ],
   research: [
     { id: "research-trend", title: "Research Publication Trend" },
@@ -153,7 +155,64 @@ export default function TrendAnalysis() {
         return <InternationalPatentFlowChart />;
       case "geographic-distribution":
         return <GeographicalDistribution />;
-      default:
+              /* ─── RESEARCH-TAB: static mockups ───────────────────────── */
+      case "research-trend":                 // 📊 simple bar trend
+      return (
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={mockBarData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="value" fill="#82ca9d" />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+
+    case "citation-analysis":              // 📊 stacked bar mock
+      return (
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={mockBarData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="value" fill="#8884d8" />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+
+    case "collaboration-network":          // 🌐 placeholder
+      return (
+        <div className="flex items-center justify-center h-64 text-gray-500">
+          Collaboration graph mock-up
+        </div>
+      );
+
+    case "funding-analysis":               // 🥧 simple pie
+      return (
+        <ResponsiveContainer width="100%" height={260}>
+          <PieChart>
+            <Pie
+              data={mockPieData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              outerRadius={90}
+              label
+            >
+              {mockPieData.map((entry) => (
+                <Cell key={entry.name} fill={entry.color} />
+              ))}
+            </Pie>
+            <Tooltip />
+          </PieChart>
+        </ResponsiveContainer>
+      );
+    /* ─── END research static blocks ─── */
+
+    default:
         return (
           <div className="flex items-center justify-center h-64">
             <p className="text-gray-500">Chart data for {cardId}</p>
@@ -182,7 +241,8 @@ export default function TrendAnalysis() {
               {allExpanded ? "Collapse All" : "Expand All"}
             </Button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 grid-flow-row dense">
+
             {analysisCards.patents.map((card) => {
   const isTop10 = card.id === "top-10-applicants";
   return (
