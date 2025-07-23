@@ -99,8 +99,9 @@ import io
 import base64
 from ops_search import json_to_cql, fetch_to_dataframe
 import pandas as pd
-from db import db, PatentOPS        # ← add PatentOPS here
 
+import uuid
+from db import RawPatent, SearchKeyword
 
 class ServerThread(threading.Thread):
     def __init__(self, app, port):
@@ -145,35 +146,21 @@ def create_app():
       return 'app is running!', 200
   
   
-  
-  # ---------- BEGIN NEW ENDPOINT ----------
-    @app.route('/api/search_ops', methods=['POST'])
-    def search_patents_ops():
-        """
-        Call EPO-OPS biblio search, return a DataFrame-like JSON.
 
-        Body:
-        {
-            "query_input": { …same JSON you already build… },
-            "max_results": 250          # optional, default 500
-        }
-        """
-        data = request.get_json(silent=True) or {}
+
+    from datetime import datetime
+
+    @app.route("/api/search_ops", methods=["POST"])
+    def search_patents_ops():
+        data        = request.get_json(silent=True) or {}
         q_input     = data.get("query_input")
         max_results = int(data.get("max_results", 500))
         if not q_input:
             return jsonify({"error": "provide 'query_input' JSON"}), 400
+
         try:
+            cql, total_cnt = None, None
             cql = json_to_cql(q_input)
-        except Exception as e:
-            return jsonify({"error": f"Bad query JSON: {e}"}), 400
-
-        try:
-            df = fetch_to_dataframe(cql, max_records=max_results)
-        except Exception as e:
-            return jsonify({"error": f"OPS request failed: {e}"}), 502
-
-        try:
             df, total_cnt = fetch_to_dataframe(cql, max_records=max_results)
         except Exception as e:
             return jsonify({"error": f"OPS request failed: {e}"}), 502
@@ -181,17 +168,64 @@ def create_app():
         if df.empty:
             return jsonify({"error": "no results"}), 404
 
-# ⬇️  (rest stays the same)  ⬇️
+    # 1) Create a unique search_id for this query
+        search_id = str(uuid.uuid4())
+
+    # 2) Prepare raw_patents mappings using attribute names
         records = df.where(pd.notnull(df), None).to_dict(orient="records")
-        db.session.query(PatentOPS).delete()
-        db.session.bulk_insert_mappings(PatentOPS, records)
+        maps = []
+        for r in records:
+            pub_date = r["Publication date"]
+        # parse date string to date object if needed
+            try:
+                dt = datetime.strptime(pub_date, "%Y%m%d")
+            except ValueError:
+                dt = None
+
+            maps.append({
+                "title":                     r["Title"],
+                "inventors":                 r["Inventors"],
+                "applicants":                r["Applicants"],
+                "publication_number":        r["Publication number"],
+                "earliest_priority":         r["Earliest priority"],
+                "publication_date":          dt,
+                "ipc":                       r["IPC"],
+                "cpc":                       r["CPC"],
+                "applicant_country":         r.get("app_country") or r.get("Applicant country"),
+                "family_number":             r["Family number"],
+            # the extra fields:
+                "first_publication_date":    dt,
+                "first_filing_year":         dt.year if dt else None,
+                "first_publication_number":  r["Publication number"],
+                "first_publication_country": r["Publication number"][:2]
+            })
+
+    # 3) Wipe & bulk-insert into raw_patents
+        db.session.query(RawPatent).delete()
+        db.session.bulk_insert_mappings(RawPatent, maps)
+
+    # 4) Record total_results in search_keywords
+    #    (you’ll need to add a total_results Integer column to SearchKeyword model/migration)
+        sk = SearchKeyword(
+            search_id     = search_id,
+            field         = "total_results",
+            keyword       = "",
+            total_results = total_cnt
+        )
+        db.session.add(sk)
         db.session.commit()
 
+    # 5) Return the response
         return jsonify({
-            "rows": len(records),
-            "total_results": total_cnt,
-            "data": records
+            "search_id"     : search_id,
+            "rows"          : len(maps),
+            "total_results" : total_cnt,
+            "data"          : records
         }), 200
+
+
+
+
 
 
   

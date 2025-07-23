@@ -19,12 +19,21 @@ FRENCH_STOP_WORDS = set([
     "could", "should", "may", "can", "will", "been", "all", "if", "when", "so", "than",
     "such", "into", "only", "no", "not", "any", "some", "more", "other", "what", "which",
     "their", "through", "about", "between", "after", "before", "while", "during", "under",
-    "within", "without", "upon", "why", "how", "many", "most", "these", "those", "then",
+    "within", "without", "upon", "why", "how", "many", "most", "then",
     "there", "just", "now", "also", "very", "much", "well", "make", "made", "using", "based",
     "new", "old", "first", "last", "next", "last", "long", "short", "high", "low", "big",
     "small", "good", "bad", "right", "left", "top", "bottom", "same", "different", "same", "different", "like", "such", "more", "less",
-    "most", "least", "best", "worst", "better", "worse", "great", "greater", "lesser", "least",
-    "important", "important", "interesting", "interested", "useful", "used", "use", "using", "used", "using" ,"thereof", "therefore", "thus", "hence", "because", "since", "although", "though", "if", "unless", "until", "while", "whereas"
+    "least", "best", "worst", "better", "worse", "great", "greater", "lesser", "least",
+    "important", "important", "interesting", "interested", "useful", "used", "use", "using", "used", "using" ,"thereof", "therefore", "thus", "hence", "because", "since",
+    "although", "though", "if", "unless", "until", "whereas","i","me","my","myself","we","our","ours",
+    "ourselves","you","your","yours","yourself","yourselves","he","him","his","himself","she",
+    "her","hers","herself","it","its","itself","they","them","their","theirs","themselves","what","which","who",
+    "whom","this","that","these","those","am","is","are","was","were","be","been","being","have","has","had",
+    "having","do","does","did","doing","a","an","the","and","but","if","or","because","as","until","while","of","at","by",
+    "for","with","about","against","between","through","above","below","to","from","up","down",
+    "in","out","on","off","over","under","again","further","then","once","here","there","when","where","why","how","all","any",
+    "both","each","few","more","most","other","some","such","no","nor","not","only","own","same","so","than","too","very","s","t",
+    "can","will","just","don","should","now","if","or"
 ])
 CUSTOM_STOPWORDS = ENGLISH_STOP_WORDS.union(FRENCH_STOP_WORDS)
 def clean_text_remove_stopwords(text):

@@ -56,10 +56,11 @@ class RawPatent(db.Model):
         }
 class SearchKeyword(db.Model):
     __tablename__ = 'search_keywords'
-    id = db.Column(db.Integer, primary_key=True)
-    search_id = db.Column(db.String(36), nullable=False)
-    field = db.Column(db.String(50), nullable=False)
-    keyword = db.Column(db.String(255), nullable=False)
+    id             = db.Column(db.Integer, primary_key=True)
+    search_id      = db.Column(db.String(36), nullable=False)
+    field          = db.Column(db.String(50), nullable=False)
+    keyword        = db.Column(db.String(255), nullable=False)
+    total_results  = db.Column(db.Integer, nullable=True)  
     
 
 
@@ -428,20 +429,25 @@ class PatentCost(db.Model):
         
         
         
-class PatentOPS(db.Model):
-    __tablename__ = "patent_ops"
-    id                 = db.Column(db.Integer, primary_key=True)
-    family_id          = db.Column(db.BigInteger, index=True)
-    title              = db.Column(db.Text, nullable=True)          # ← was False
-    applicants         = db.Column(db.Text, nullable=True)
-    inventors          = db.Column(db.Text, nullable=True)
-    publication_number = db.Column(db.String(80), index=True, nullable=True)
-    publication_date   = db.Column(db.Date, nullable=True)
-    ipc                = db.Column(db.Text, nullable=True)
-    cpc                = db.Column(db.Text, nullable=True)
-    earliest_priority  = db.Column(db.Date, nullable=True)
-    app_country        = db.Column(db.String(2), nullable=True)
-    is_active          = db.Column(db.Boolean)
-
-    def to_dict(self):
-        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+# class PatentOPS(db.Model):
+#     __tablename__ = "patent_ops"
+#     No                 = db.Column(db.Integer, primary_key=True)
+#     Title              = db.Column(db.Text, nullable=True) 
+#     Inventors          = db.Column(db.Text, nullable=True) 
+#     Applicants         = db.Column(db.Text, nullable=True) 
+    
+#     Publication_number = db.Column(db.String(80), index=True, nullable=True)
+#     earliest_priority  = db.Column(db.Date, nullable=True)
+#     publication_country = db.Column(db.String(2), nullable=True)
+#     publication_date   = db.Column(db.Date, nullable=True)
+#     first_filing_year  = db.Column(db.Integer, nullable=True)
+#     earliest_priority_year = db.Column(db.Integer, nullable=True)
+#     ipc                = db.Column(db.Text, nullable=True)
+#     cpc                = db.Column(db.Text, nullable=True)
+#     app_country        = db.Column(db.String(2), nullable=True)
+#     family_id          = db.Column(db.BigInteger, index=True)
+#     is_active          = db.Column(db.Boolean)
+#     abstract           = db.Column(db.Text, nullable=True) 
+    
+#     def to_dict(self):
+#         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
