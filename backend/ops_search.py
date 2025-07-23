@@ -98,6 +98,18 @@ def _doc_to_dict(doc) -> dict:
 #     return df
 
 
+def extract_keyword_pairs(node):
+    if node["type"] == "keyword":
+        return [(node["field"], node["word"])]
+    elif node["type"] == "group":
+        pairs = []
+        for child in node["keywords"]:
+            pairs.extend(extract_keyword_pairs(child))
+        return pairs
+    return []
+
+
+
 def fetch_to_dataframe(cql: str, max_records: int = 500) -> tuple[pd.DataFrame, int]:
     out, total = [], None
     start, step = 1, 100

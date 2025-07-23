@@ -97,7 +97,7 @@ from pptx import Presentation
 from pptx.util import Inches
 import io
 import base64
-from ops_search import json_to_cql, fetch_to_dataframe
+from ops_search import json_to_cql, fetch_to_dataframe ,extract_keyword_pairs
 import pandas as pd
 
 import uuid
@@ -204,15 +204,17 @@ def create_app():
         db.session.query(RawPatent).delete()
         db.session.bulk_insert_mappings(RawPatent, maps)
 
-    # 4) Record total_results in search_keywords
-    #    (you’ll need to add a total_results Integer column to SearchKeyword model/migration)
-        sk = SearchKeyword(
-            search_id     = search_id,
-            field         = "total_results",
-            keyword       = "",
-            total_results = total_cnt
-        )
-        db.session.add(sk)
+        keyword_pairs = extract_keyword_pairs(q_input["query"]["group1"])
+
+        # insert one row per keyword, all sharing the same search_id & total_results
+        for field, word in keyword_pairs:
+            sk = SearchKeyword(
+                search_id     = search_id,
+                field         = field,      # e.g. "title" or "abstract"
+                keyword       = word,       # the actual search term
+                total_results = total_cnt   # same total for each keyword
+            )
+            db.session.add(sk)
         db.session.commit()
 
     # 5) Return the response
