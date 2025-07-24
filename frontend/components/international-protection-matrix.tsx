@@ -118,7 +118,7 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
         flexDirection: "column",
       }}
     >
-      <div
+      {/* <div
         style={{
           marginTop: 12,
           padding: "8px 28px",
@@ -132,7 +132,7 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
         }}
       >
         International Patent Protection Strategy
-      </div>
+      </div> */}
       <div
         style={{
           textAlign: "center",

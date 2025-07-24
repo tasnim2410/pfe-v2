@@ -117,7 +117,7 @@ export const FamilyMemberCountChart: React.FC<{ port?: number }> = ({
         flexDirection: "column",
       }}
     >
-      <div
+      {/* <div
         style={{
           marginTop: 12,
           padding: "8px 28px",
@@ -131,7 +131,7 @@ export const FamilyMemberCountChart: React.FC<{ port?: number }> = ({
         }}
       >
         Family Member Count / Country
-      </div>
+      </div> */}
 
       <div style={{ height: 280, marginTop: 10 }}>
         <Bar data={data} options={options} />

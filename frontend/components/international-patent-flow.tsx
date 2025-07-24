@@ -106,7 +106,7 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
         flexDirection: "column",
       }}
     >
-      <div
+      {/* <div
         style={{
           marginTop: 12,
           padding: "8px 28px",
@@ -120,7 +120,7 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
         }}
       >
         International Patent Flow Analysis
-      </div>
+      </div> */}
       <div style={{ textAlign: "center", marginTop: 4, fontSize: 13, color: "#666" }}>
         Where countries receive their patents from
       </div>
