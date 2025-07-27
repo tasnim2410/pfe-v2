@@ -2878,7 +2878,8 @@ def create_app():
         data = request.get_json()
         images = data.get('images', [])      # list of { id, data }
         comments = data.get('comments', {})  # dict id→comment
-
+        if isinstance(comments, list):
+            comments = {comment['id']: comment['text'] for comment in comments}
         prs = Presentation()
         for img_obj in images:
             img_b64 = img_obj.get('data')
