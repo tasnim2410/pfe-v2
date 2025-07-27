@@ -107,6 +107,15 @@ const TEMPLATES: Template[] = [
   }
 ]
 
+
+const COMMENT_STYLE = {
+  background: "#f8f9fa",
+  border: "1.5px solid #e9ecef",
+  handleBackground: "rgba(108, 117, 125, 0.06)",
+  resizeBackground: "rgba(108, 117, 125, 0.11)",
+  textColor: "#495057"
+};
+
 // Render chart by id (memoized)
 const renderChart = (chartId: string | null) => {
   if (!chartId) return null
@@ -149,10 +158,33 @@ const renderChart = (chartId: string | null) => {
 }
 const ChartSlot = memo(
   function ChartSlot({ chartId }: { chartId: string | null }) {
-    return renderChart(chartId)
+    const [isLoading, setIsLoading] = useState(true);
+    
+    useEffect(() => {
+      if (chartId) {
+        setIsLoading(true);
+        // Simulate chart loading
+        const timer = setTimeout(() => {
+          setIsLoading(false);
+        }, 800);
+        
+        return () => clearTimeout(timer);
+      }
+    }, [chartId]);
+    
+    return (
+      <div className="w-full h-full relative">
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-50 bg-opacity-80 z-10">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+          </div>
+        )}
+        {renderChart(chartId)}
+      </div>
+    );
   },
   (prev, next) => prev.chartId === next.chartId
-)
+);
 
 const MIN_SLOT_WIDTH = 120
 const MIN_SLOT_HEIGHT = 90
@@ -200,7 +232,8 @@ export default function Reporting() {
   const [isLayoutUnlocked, setIsLayoutUnlocked] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [showWarning, setShowWarning] = useState(false)
-
+  const [isExporting, setIsExporting] = useState(false);
+  const [chartLoading, setChartLoading] = useState<Record<string, boolean>>({});
   // When template picked, create first page
   useEffect(() => {
     if (selectedTemplate) {
@@ -213,9 +246,44 @@ export default function Reporting() {
       setActivePageIdx(0)
     }
   }, [selectedTemplate])
-
-  // Utility for active page data
   const activePage = pages[activePageIdx]
+  const getCurrentPageChartIds = () => {
+    return activePage?.layout
+      .filter(slot => slot.chartId)
+      .map(slot => slot.id) || [];
+  };
+
+  const waitForCharts = (selector: string) => {
+    return new Promise<void>(resolve => {
+      const check = () => {
+        const charts = document.querySelectorAll(selector);
+        if (charts.length > 0) {
+          resolve();
+        } else {
+          setTimeout(check, 100);
+        }
+      };
+      check();
+    });
+  };
+  
+
+  const { allLoaded: chartsLoaded, markAsLoaded } = useChartLoading(getCurrentPageChartIds());
+  const getPageDimensions = (page: Page) => {
+    const width = Math.max(
+      ...(page.layout?.map(slot => slot.x + slot.width) || []),
+      ...(page.comments?.map(c => c.x + c.width) || []),
+      selectedTemplate?.dimensions.width || 600
+    ) + PADDING;
+    
+    const height = Math.max(
+      ...(page.layout?.map(slot => slot.y + slot.height) || []),
+      ...(page.comments?.map(c => c.y + c.height) || []),
+      selectedTemplate?.dimensions.height || 600
+    ) + PADDING;
+    
+    return { width, height };
+  };
 
   // Add new page (duplicate template structure, empty)
   const addNewPage = () => {
@@ -237,6 +305,7 @@ export default function Reporting() {
     setPages(p => p.filter((_, i) => i !== idx))
     setActivePageIdx(idx === 0 ? 0 : idx - 1)
   }
+  
 
   // ---- Slot & comment operations on active page ----
   function updateLayout(updater: (layout: Slot[]) => Slot[]) {
@@ -289,87 +358,201 @@ export default function Reporting() {
   ) + PADDING
 
   // … inside your Reporting() component, just above the return:
+  // Add this utility function
+const waitForAll = (predicate: () => boolean, timeout = 10000) => {
+  return new Promise<void>((resolve, reject) => {
+    const startTime = Date.now();
+    const check = () => {
+      if (predicate()) {
+        resolve();
+      } else if (Date.now() - startTime > timeout) {
+        reject(new Error('Timeout waiting for condition'));
+      } else {
+        setTimeout(check, 100);
+      }
+    };
+    check();
+  });
+};
 
-  const generatePpt = async () => {
-    // 1) Gather all rendered chart divs
-    const divs = Array.from(document.querySelectorAll<HTMLDivElement>('[id^="chart-"]'));
-    if (!divs.length) return alert("No charts to export.");
-  
-    // 2) Screenshot each with html2canvas
-    const images = await Promise.all(
-      divs.map(async d => ({
-        id: d.id.replace("chart-", ""),
-        data: (await html2canvas(d)).toDataURL("image/png"),
-      }))
-    );
-    const commentMap = (activePage?.comments || []).reduce((acc, comment) => {
-      acc[comment.id] = comment.text;
-      return acc;
-    }, {} as Record<string, string>);
-  
-    try {
-      // 3) Ask your local backend port
-      const portResponse = await fetch("/backend_port.txt");
-      const port = await portResponse.text();
-      // 4) Send to your PPTX-generation endpoint
-      const res = await fetch(`http://localhost:${port}/api/report/generate-pptx`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images, comments: commentMap }),
-      });
-  
-      if (!res.ok) throw new Error(await res.text());
-  
-      // 5) Download the returned PPTX blob
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
-      a.download = "charts-report.pptx";
-      a.click();
-    } catch (e) {
-      console.error(e);
-      alert("Export failed: " + e);
-    }
-  };
-  const chartStyle: React.CSSProperties = isLayoutUnlocked 
-  ? {} 
-  : { position: 'relative', zIndex: 1 };
-     
-  
-
-
-  const generatePdf = async () => {
-    if (isLayoutUnlocked) {
-      setShowWarning(true)
-      setTimeout(() => setShowWarning(false), 2100)
-      return
-    }
-    
-    if (!selectedTemplate || !activePage) return
-    const previewNode = document.querySelector('.preview-canvas')
-    if (!previewNode) return
-    
-    const canvas = await html2canvas(previewNode as HTMLElement, { scale: 2 })
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF({
-      orientation:
-        pageWidth > pageHeight
-          ? 'landscape'
-          : 'portrait',
-      unit: 'pt',
-      format: [pageWidth, pageHeight],
-    })
-    pdf.addImage(
-      imgData,
-      'PNG',
-      0,
-      0,
-      pageWidth,
-      pageHeight
-    )
-    pdf.save(`${selectedTemplate.name}_${activePage.name}.pdf`)
+// In the generatePdf function:
+const generatePdf = async () => {
+  if (isLayoutUnlocked) {
+    setShowWarning(true);
+    setTimeout(() => setShowWarning(false), 2100);
+    return;
   }
+  
+  if (!selectedTemplate) return;
+  setIsExporting(true);
+  
+  try {
+    const pdf = new jsPDF();
+    const originalPageIdx = activePageIdx;
+    
+    for (let i = 0; i < pages.length; i++) {
+      setActivePageIdx(i);
+      // Wait for UI to update
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const previewNode = document.querySelector('.preview-canvas');
+      if (!previewNode) continue;
+      
+      // Wait for all charts to be present
+      await waitForAll(() => {
+        return previewNode.querySelectorAll('[id^="chart-"]').length > 0;
+      });
+      
+      // Wait for charts to finish rendering
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const { width, height } = getPageDimensions(pages[i]);
+      const canvas = await html2canvas(previewNode as HTMLElement, { 
+        scale: 1,
+        backgroundColor: "#FFFFFF",
+        useCORS: true,
+        logging: true,
+        ignoreElements: (element) => {
+          // Ignore the loading overlay if present
+          return element.classList.contains('export-loading-overlay');
+        }
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      
+      // Calculate aspect ratio
+      const aspectRatio = imgWidth / imgHeight;
+      const pdfPageWidth = pdf.internal.pageSize.getWidth();
+      const pdfPageHeight = pdf.internal.pageSize.getHeight();
+      
+      // Calculate dimensions to fit the page
+      let renderWidth = pdfPageWidth;
+      let renderHeight = pdfPageHeight;
+      
+      if (aspectRatio > pdfPageWidth / pdfPageHeight) {
+        renderHeight = pdfPageWidth / aspectRatio;
+      } else {
+        renderWidth = pdfPageHeight * aspectRatio;
+      }
+      
+      // Center the image
+      const x = (pdfPageWidth - renderWidth) / 2;
+      const y = (pdfPageHeight - renderHeight) / 2;
+      
+      if (i > 0) pdf.addPage();
+      
+      pdf.addImage(
+        imgData,
+        'PNG',
+        x,
+        y,
+        renderWidth,
+        renderHeight
+      );
+    }
+    
+    setActivePageIdx(originalPageIdx);
+    pdf.save(`${selectedTemplate.name}_report.pdf`);
+  } catch (e) {
+    console.error("PDF export failed:", e);
+    alert("PDF export failed: " + e);
+  } finally {
+    setIsExporting(false);
+  }
+};
+
+// In the generatePpt function:
+const generatePpt = async () => {
+  if (isLayoutUnlocked) {
+    setShowWarning(true);
+    setTimeout(() => setShowWarning(false), 2100);
+    return;
+  }
+  
+  if (!selectedTemplate) return;
+  setIsExporting(true);
+  
+  try {
+    const images = [];
+    const originalPageIdx = activePageIdx;
+    
+    
+    for (let i = 0; i < pages.length; i++) {
+      setActivePageIdx(i);
+      // Wait for UI to update
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      const previewNode = document.querySelector('.preview-canvas');
+      if (!previewNode) continue;
+      
+      // Wait for all charts to be present
+      await waitForAll(() => {
+        return previewNode.querySelectorAll('[id^="chart-"]').length > 0;
+      });
+      
+      // Wait for charts to finish rendering
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const canvas = await html2canvas(previewNode as HTMLElement, { 
+        scale: 1,
+        backgroundColor: "#FFFFFF",
+        useCORS: true,
+        logging: true,
+        ignoreElements: (element) => {
+          return element.classList.contains('export-loading-overlay');
+        }
+      });
+      
+      // Capture actual pixel dimensions
+      const imgWidthPx = canvas.width;
+      const imgHeightPx = canvas.height;
+      
+      images.push({
+        id: `page-${i+1}`,
+        data: canvas.toDataURL("image/png"),
+        width: imgWidthPx,
+        height: imgHeightPx
+      });
+    }
+    
+    setActivePageIdx(originalPageIdx);
+    
+    // Get backend port
+    const portResponse = await fetch("/backend_port.txt");
+    const port = await portResponse.text();
+    
+    // Send to backend with page dimensions
+    const res = await fetch(`http://localhost:${port}/api/report/generate-pptx`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        images,
+        dimensions: {
+          width: selectedTemplate.dimensions.width,
+          height: selectedTemplate.dimensions.height
+        }
+      }),
+    });
+
+    if (!res.ok) throw new Error(await res.text());
+
+    // Download the PPT
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "report.pptx";
+    a.click();
+  } catch (e) {
+    console.error("PPT export failed:", e);
+    alert("PPT export failed: " + e);
+  } finally {
+    setIsExporting(false);
+  }
+};
+
 
   // --- Slot drag/resize handlers: always auto-push other slots out of the way
   function handleSlotDrag(id: string, startX: number, startY: number) {
@@ -393,6 +576,21 @@ export default function Reporting() {
     }
     window.addEventListener("mousemove", onMouseMove)
     window.addEventListener("mouseup", onMouseUp)
+  }
+  function useChartLoading(chartIds: string[]) {
+    const [loadedCharts, setLoadedCharts] = useState<Record<string, boolean>>({});
+    const [allLoaded, setAllLoaded] = useState(false);
+  
+    useEffect(() => {
+      const allLoaded = chartIds.every(id => loadedCharts[id]);
+      setAllLoaded(allLoaded);
+    }, [loadedCharts, chartIds]);
+  
+    const markAsLoaded = (id: string) => {
+      setLoadedCharts(prev => ({ ...prev, [id]: true }));
+    };
+  
+    return { allLoaded, markAsLoaded };
   }
   function handleSlotResizeMouseDown(slot: Slot, e: React.MouseEvent) {
     e.preventDefault()
@@ -537,10 +735,15 @@ export default function Reporting() {
       {/* PAGE TABS */}
       <div className="flex gap-2 mb-4">
         {pages.map((pg, i) => (
+          
           <button
             key={pg.id}
             onClick={() => setActivePageIdx(i)}
-            className={`flex items-center gap-2 px-3 py-1 border-b-2 ${i === activePageIdx ? "border-blue-500 font-bold" : "border-transparent"} bg-white rounded-t`}
+            className={`flex items-center gap-2 px-3 py-1 border-b-2 ${
+              i === activePageIdx 
+                ? "border-gray-700 bg-gray-200 text-gray-900 font-bold" 
+                : "border-transparent bg-gray-100 text-gray-700"
+            } rounded-t transition-colors`}
             style={{ minWidth: 68 }}
           >
             <File size={15} className="mr-1" />
@@ -559,8 +762,8 @@ export default function Reporting() {
         {isLayoutUnlocked && (
           <button
             onClick={addNewPage}
-            className="flex items-center gap-2 px-3 py-1 text-blue-700 bg-blue-50 border-b-2 border-transparent rounded-t hover:bg-blue-100"
-          >
+            className="flex items-center gap-2 px-3 py-1 text-gray-800 bg-gray-100 border-b-2 border-transparent rounded-t hover:bg-gray-200 transition-colors"
+    >
             <FilePlus2 size={16} />
             Add Page
           </button>
@@ -641,7 +844,7 @@ export default function Reporting() {
     )}
   </div>
 
-  <div className="space-x-2">
+  <div className="flex items-center space-x-2">
     {/* PDF */}
     <Button
       onClick={generatePdf}
@@ -743,10 +946,17 @@ export default function Reporting() {
                       <div style={{ flex: 1, minHeight: 0, paddingTop: isLayoutUnlocked ? 18 : 0 }}>
                         {slot.chartId ? (
                             <div 
-                            id={`chart-${slot.id}`} // Add this ID
-                            style={{ ...chartStyle, width: '100%', height: '100%' }}
+                            id={`chart-${slot.id}`}
+                            style={{ 
+                              width: '100%', 
+                              height: '100%',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              position: 'relative',
+                              overflow: 'hidden',
+                            }}
                           >
-                            <ChartSlot chartId={slot.chartId} />
+                            <ChartSlot chartId={slot.chartId} onLoad={() => markAsLoaded(slot.id)} />
                           </div>
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -796,8 +1006,8 @@ export default function Reporting() {
                         width: sticky.width,
                         height: sticky.height,
                         zIndex: 10,
-                        background: "#f8fcff",
-                        border: "1.5px solid #bbdefb",
+                        background: COMMENT_STYLE.background,
+                        border: COMMENT_STYLE.border,
                         borderRadius: 6,
                         boxShadow: "0 1px 6px #0001",
                         display: "flex",
@@ -814,7 +1024,7 @@ export default function Reporting() {
                             cursor: "grab",
                             borderTopLeftRadius: 6,
                             borderTopRightRadius: 6,
-                            background: "rgba(33,150,243,0.06)"
+                            background: COMMENT_STYLE.background
                           }}
                         />
                       )}
@@ -837,7 +1047,8 @@ export default function Reporting() {
                           boxShadow: "none",
                           minHeight: 32,
                           resize: "none",
-                          pointerEvents: isLayoutUnlocked ? "auto" : "none"
+                          pointerEvents: isLayoutUnlocked ? "auto" : "none",
+                          color: COMMENT_STYLE.textColor,
                         }}
                         disabled={!isLayoutUnlocked}
                       />
@@ -851,7 +1062,7 @@ export default function Reporting() {
                             bottom: 0,
                             width: 18,
                             height: 18,
-                            background: "rgba(33,150,243,0.11)",
+                            background: COMMENT_STYLE.resizeBackground,
                             cursor: "nwse-resize",
                             zIndex: 12,
                             borderRadius: "0 0 6px 0",
@@ -878,6 +1089,24 @@ export default function Reporting() {
           </Card>
         </div>
       </div>
+      {isExporting && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 z-[1000] flex items-center justify-center">
+    <div className="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 mb-4"></div>
+      <p className="text-lg font-medium text-gray-800">
+        Preparing export...
+      </p>
+      <p className="text-gray-600 mt-1">
+        Rendering page {activePageIdx + 1} of {pages.length}
+      </p>
+      {!chartsLoaded && (
+        <p className="text-gray-500 text-sm mt-2">
+          Waiting for charts to load...
+        </p>
+      )}
+    </div>
+  </div>
+)}
     </div>
   )
 }

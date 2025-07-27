@@ -2871,43 +2871,62 @@ def create_app():
         
         
 
-
-
     @app.route('/api/report/generate-pptx', methods=['POST'])
     def generate_pptx():
         data = request.get_json()
-        images = data.get('images', [])      # list of { id, data }
-        comments = data.get('comments', {})  # dict id→comment
-        if isinstance(comments, list):
-            comments = {comment['id']: comment['text'] for comment in comments}
+        images = data.get('images', [])
+        dimensions = data.get('dimensions', {})
+    
         prs = Presentation()
+    
+        # Convert template dimensions to inches (1 inch = 72 points)
+        template_width_in = dimensions.get('width', 0) / 72
+        template_height_in = dimensions.get('height', 0) / 72
+    
+        # Set slide size based on template
+        prs.slide_width = Inches(template_width_in)
+        prs.slide_height = Inches(template_height_in)
+    
         for img_obj in images:
             img_b64 = img_obj.get('data')
-            chart_id = img_obj.get('id')
-            # slide layout 5 is blank
-            slide = prs.slides.add_slide(prs.slide_layouts[5])
-
-            # decode and add image
+            img_width_px = img_obj.get('width', 0)
+            img_height_px = img_obj.get('height', 0)
+        
+            # decode image
             image_stream = io.BytesIO(
                 base64.b64decode(img_b64.split(',', 1)[1])
             )
+        
+            # Calculate aspect ratios
+            img_aspect = img_width_px / img_height_px if img_height_px else 1
+            slide_aspect = template_width_in / template_height_in
+        
+            # Calculate dimensions to maintain aspect ratio
+            if img_aspect > slide_aspect:
+                # Image is wider than slide - fit to width
+                width = template_width_in
+                height = template_width_in / img_aspect
+                top = (template_height_in - height) / 2
+                left = 0
+            else:
+                # Image is taller than slide - fit to height
+                height = template_height_in
+                width = template_height_in * img_aspect
+                left = (template_width_in - width) / 2
+                top = 0
+            
+            slide = prs.slides.add_slide(prs.slide_layouts[5])
+        
+            # Add image centered with correct aspect ratio
             slide.shapes.add_picture(
                 image_stream,
-                Inches(1),
-                Inches(1.2),
-                width=Inches(7)
+                Inches(left),
+                Inches(top),
+                width=Inches(width),
+                height=Inches(height)
             )
 
-            # look up comment by the same id
-            comment_text = comments.get(chart_id, "")
-            if comment_text:
-                txBox = slide.shapes.add_textbox(
-                    Inches(1), Inches(5), Inches(7), Inches(1)
-                )
-                tf = txBox.text_frame
-                tf.text = comment_text
 
-        # write out PPTX
         output = io.BytesIO()
         prs.save(output)
         output.seek(0)
@@ -2920,9 +2939,6 @@ def create_app():
                 "vnd.openxmlformats-officedocument.presentationml.presentation"
             )
         )
-        
-        
-        
         
         
 
