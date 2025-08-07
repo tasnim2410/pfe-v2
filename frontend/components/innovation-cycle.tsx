@@ -1,6 +1,7 @@
 
 
 import React, { useEffect, useState } from "react";
+import LoadingSpinner from "./LoadingSpinner";
 
 const STAGES = [
   {
@@ -92,7 +93,7 @@ export const InnovationCycle: React.FC = () => {
   }, []);
 
   if (error) return <div style={{ color: "red" }}>{error}</div>;
-  if (percentage === null) return <div>Loading innovation cycle...</div>;
+  if (percentage === null) return <LoadingSpinner text="Loading innovation cycle..." />;
 
   const activeStage = getStage(percentage);
   const activeIndex = STAGES.findIndex((s) => s.label === activeStage.label);

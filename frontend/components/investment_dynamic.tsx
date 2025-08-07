@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import LoadingSpinner from "./LoadingSpinner";
 
 // Stages: Label, color, logic min/max
 const STAGES = [
@@ -86,7 +87,7 @@ export const InvestmentDynamic: React.FC = () => {
 
   if (error) return <div style={{ color: "#EA3C53" }}>{error}</div>;
   if (growthRate === null)
-    return <div>Loading investment dynamic...</div>;
+    return <LoadingSpinner text="Loading investment dynamic..." />;
 
   const stage = getStage(growthRate);
 

@@ -35,7 +35,7 @@ export const Top10Applicants: React.FC = () => {
   }, []);
 
   if (loading) {
-    return <div style={{textAlign:"center", marginTop:24}}>Loading Top 10 Applicants...</div>;
+    return <LoadingSpinner text="Loading Top 10 Applicants..." style={{ marginTop: 24 }} />;
   }
   if (err) {
     return <div style={{color:"#EA3C53", textAlign:"center"}}>{err}</div>;

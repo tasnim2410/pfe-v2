@@ -7,7 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
-import PublicationTrends from "@/components/publication_trends"; // <-- ADDED
+import PublicationTrends from "@/components/publication_trends";
+import ResearchFieldTrends from "@/components/research_field_trends";
+import PublicationsByYear from "@/components/publications_by_year";
 import EvolvingWordCloud from "@/components/evolving_word_cloud";
 import ApplicantTypePie from "@/components/applicant_type_pie";
 import IpStatsBox from "@/components/IPStat";
@@ -47,10 +49,14 @@ const analysisCards = {
     
     ],
   research: [
+    
     { id: "research-trend", title: "Research Publication Trend" },
+    
+    { id: "publications-by-year", title: "Publications by Year" },
     { id: "citation-analysis", title: "Citation Analysis" },
     { id: "collaboration-network", title: "Collaboration Network" },
     { id: "funding-analysis", title: "Funding Analysis" },
+    { id: "research-field-trends", title: "Research Trend by Field" },
   ],
 }
 
@@ -157,17 +163,13 @@ export default function TrendAnalysis() {
         return <GeographicalDistribution />;
               /* ─── RESEARCH-TAB: static mockups ───────────────────────── */
       case "research-trend":                 // 📊 simple bar trend
-      return (
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={mockBarData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="value" fill="#82ca9d" />
-          </BarChart>
-        </ResponsiveContainer>
-      );
+        return (
+          <PublicationTrends />
+        );
+      case "research-field-trends":
+        return <ResearchFieldTrends />;
+      case "publications-by-year":
+        return <PublicationsByYear />;
 
     case "citation-analysis":              // 📊 stacked bar mock
       return (
@@ -246,7 +248,7 @@ export default function TrendAnalysis() {
             {analysisCards.patents.map((card) => {
   const isTop10 = card.id === "top-10-applicants";
   return (
-    <div key={card.id}>
+    <div key={card.id} className={card.id === "research-field-trends" ? "col-span-full" : ""}>
       {!visibleCards.includes(card.id) ? (
         <Button
           variant="outline"
@@ -276,7 +278,7 @@ export default function TrendAnalysis() {
         <TabsContent value="research" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {analysisCards.research.map((card) => (
-              <div key={card.id}>
+              <div key={card.id} className={card.id === "research-field-trends" ? "col-span-full" : ""}>
                 {!visibleCards.includes(card.id) ? (
                   <Button
                     variant="outline"

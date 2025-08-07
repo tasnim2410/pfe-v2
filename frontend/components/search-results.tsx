@@ -213,7 +213,7 @@ export function SearchResults({ hasSearched, results, loading }: SearchResultsPr
               <X className="h-4 w-4" />
             </Button>
             <CardHeader>
-              <CardTitle>Analysis Summary</CardTitle>
+              {/* <CardTitle>Analysis Summary</CardTitle> */}
             </CardHeader>
             <CardContent className="flex items-center justify-center w-full p-2" id={`chart-${card.id}`}>
               <React.Suspense fallback={<LoadingSpinner text="Loading analysis summary..." size={28} height={60} />}> 

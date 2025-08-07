@@ -1,5 +1,3 @@
-
-
 // import React, { useEffect, useRef, useState } from "react";
 // import LoadingSpinner from "./LoadingSpinner";
 
@@ -311,6 +309,7 @@
 
 
 import React, { useEffect, useRef, useState } from "react";
+import LoadingSpinner from "./LoadingSpinner";
 
 // Stages: Label, color, logic for originality rate (0-1 scale converted to percentage)
 const STAGES = [
@@ -456,8 +455,8 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
   }, [originalityRate]);
 
   if (error) return <div style={{ color: "#EA3C53" }}>{error}</div>;
-  if (isLoading) return <div>{loadingMessage}</div>;
-  if (originalityRate === null) return <div>Loading originality dynamic...</div>;
+  if (isLoading) return <LoadingSpinner text={loadingMessage} />;
+  if (originalityRate === null) return <LoadingSpinner text="Loading originality dynamic..." />;
 
   const stage = getStage(originalityRate);
 

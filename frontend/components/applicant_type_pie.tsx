@@ -421,7 +421,7 @@
 //   /** ------------------------------------------------------------------
 //    *  Conditional UI states
 //    *  -----------------------------------------------------------------*/
-//   if (loading) return <div>Loading…</div>;
+//   if (loading) return <LoadingSpinner text="Loading applicant type pie..." />;
 //   if (err) return <div style={{ color: "red" }}>{err}</div>;
 //   if (!summary) return <div>No data available.</div>;
 
@@ -491,6 +491,7 @@
 
 
 import React, { useEffect, useState } from "react";
+import LoadingSpinner from "./LoadingSpinner";
 
 const PIE_COLORS = [
   "#E6F4EA", "#B9E6C9", "#70C36A",
@@ -617,7 +618,7 @@ export const ApplicantTypePie: React.FC = () => {
   }
 
   /** ────────────────────── UI state handling ─────────────────────── */
-  if (loading) return <div>Loading…</div>;
+  if (loading) return <LoadingSpinner text="Loading applicant type pie..." />;
   if (err) return <div style={{ color: "red" }}>{err}</div>;
   if (!summary) return <div>No data available.</div>;
 
