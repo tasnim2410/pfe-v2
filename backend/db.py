@@ -28,6 +28,7 @@ class RawPatent(db.Model):
     second_publication_number = db.Column('second_publication_number', db.String(50), nullable=True)
     first_publication_country = db.Column('first_publication_country', db.String(2), nullable=True)
     second_publication_country = db.Column('second_publication_country', db.String(2), nullable=True)
+    abstract = db.Column('abstract', db.Text, nullable=True)
 
     def to_dict(self):
         return {
@@ -52,7 +53,8 @@ class RawPatent(db.Model):
             'second_publication_number': self.second_publication_number,
             'first_publication_country': self.first_publication_country,
             'second_publication_country': self.second_publication_country,
-            'earliest_publication': self.earliest_publication.isoformat() if self.earliest_publication else None
+            'earliest_publication': self.earliest_publication.isoformat() if self.earliest_publication else None,
+            'abstract': self.abstract
         }
 class SearchKeyword(db.Model):
     __tablename__ = 'search_keywords'

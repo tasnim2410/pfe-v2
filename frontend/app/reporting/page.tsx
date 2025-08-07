@@ -67,6 +67,11 @@ type StickyComment = {
   y: number
   width: number
   height: number
+  fontSize: number
+  bold: boolean
+  italic: boolean
+  underline: boolean
+  color: string
 }
 type Page = {
   id: string
@@ -331,14 +336,44 @@ export default function Reporting() {
   const addNewComment = () => {
     updateComments(comments => [
       ...comments,
-      { id: `comment-${Date.now()}`, text: "", x: 120, y: 120, width: 180, height: 80 }
+      {
+        id: `comment-${Date.now()}`,
+        text: "",
+        x: 120,
+        y: 120,
+        width: 180,
+        height: 80,
+        fontSize: 14,
+        bold: false,
+        italic: false,
+        underline: false,
+        color: "#222"
+      }
     ])
   }
   const removeSlot = (slotId: string) => updateLayout(layout => layout.filter(slot => slot.id !== slotId))
   const removeComment = (commentId: string) => updateComments(comments => comments.filter(c => c.id !== commentId))
   const updateCommentText = (id: string, text: string) =>
     updateComments(comments => comments.map(c => c.id === id ? { ...c, text } : c))
-
+  function updateCommentStyle(
+    commentId: string,
+    styleProp: keyof Omit<StickyComment,
+      'id'|'x'|'y'|'width'|'height'|'text'>,
+    value: any
+  ) {
+    setPages(pgs =>
+      pgs.map((pg, i) =>
+        i === activePageIdx
+          ? {
+              ...pg,
+              comments: pg.comments.map(c =>
+                c.id === commentId ? { ...c, [styleProp]: value } : c
+              )
+            }
+          : pg
+      )
+    );
+  }
   const toggleChart = (id: string) => {
     setSelectedCharts(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -935,7 +970,7 @@ const generatePpt = async () => {
                         ></div>
                       )}
                       {/* Delete */}
-                      {isLayoutUnlocked && slot.chartId && (
+                      {isLayoutUnlocked && (
                         <button
                           onClick={() => removeSlot(slot.id)}
                           className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 z-20"
@@ -956,7 +991,7 @@ const generatePpt = async () => {
                               overflow: 'hidden',
                             }}
                           >
-                            <ChartSlot chartId={slot.chartId} onLoad={() => markAsLoaded(slot.id)} />
+                            <ChartSlot chartId={slot.chartId} />
                           </div>
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -1015,6 +1050,38 @@ const generatePpt = async () => {
                         pointerEvents: isLayoutUnlocked ? "auto" : "none"
                       }}
                     >
+                      {/* ── Toolbar ── */}
+                      {isLayoutUnlocked && (
+                        <div className="flex items-center gap-1 px-1 py-0.5 bg-gray-200">
+                          <select
+                            value={sticky.fontSize}
+                            onChange={e => updateCommentStyle(sticky.id, 'fontSize', +e.target.value)}
+                            className="text-xs"
+                          >
+                            {[12,14,16,18,20,24,28].map(sz => (
+                              <option key={sz} value={sz}>{sz}px</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => updateCommentStyle(sticky.id, 'bold', !sticky.bold)}
+                            className={`px-1 ${sticky.bold ? 'bg-gray-400' : ''}`}
+                          ><b>B</b></button>
+                          <button
+                            onClick={() => updateCommentStyle(sticky.id, 'italic', !sticky.italic)}
+                            className={`px-1 ${sticky.italic ? 'bg-gray-400' : ''}`}
+                          ><em>I</em></button>
+                          <button
+                            onClick={() => updateCommentStyle(sticky.id, 'underline', !sticky.underline)}
+                            className={`px-1 ${sticky.underline ? 'bg-gray-400' : ''}`}
+                          ><u>U</u></button>
+                          <input
+                            type="color"
+                            value={sticky.color}
+                            onChange={e => updateCommentStyle(sticky.id, 'color', e.target.value)}
+                            className="w-6 h-6 p-0 border-none"
+                          />
+                        </div>
+                      )}
                       {isLayoutUnlocked && (
                         <div
                           onMouseDown={e => handleCommentDrag(sticky.id, e.clientX, e.clientY)}
@@ -1028,6 +1095,7 @@ const generatePpt = async () => {
                           }}
                         />
                       )}
+                      
                       {isLayoutUnlocked && (
                         <button
                           onClick={() => removeComment(sticky.id)}
@@ -1049,6 +1117,10 @@ const generatePpt = async () => {
                           resize: "none",
                           pointerEvents: isLayoutUnlocked ? "auto" : "none",
                           color: COMMENT_STYLE.textColor,
+                          fontWeight: sticky.bold ? "bold" : "normal",
+                          fontStyle: sticky.italic ? "italic" : "normal",
+                          textDecoration: sticky.underline ? "underline" : "none",
+                          fontSize: sticky.fontSize + "px",
                         }}
                         disabled={!isLayoutUnlocked}
                       />

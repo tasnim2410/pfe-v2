@@ -40,7 +40,8 @@ from pandas.errors import ParserError
 from research_retrieve2 import fetch_research_data2, process_research_data2, store_research_data2
 from research_retrieve3 import (
     fetch_research_data3, process_research_data3, fetch_openalex_works, process_documents,
-    clean_issn, clean_doi, renaming_columns, merge_unique_by_doi, store_research_data3
+    clean_issn, clean_doi, renaming_columns, merge_unique_by_doi, store_research_data3,
+    filter_by_impact_factor
 )
 from flask_cors import CORS
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -90,7 +91,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify
 from tqdm import tqdm   # for progress bar
 from sqlalchemy.orm import scoped_session
-from db import RawPatent, db
+from db import RawPatent, db , ResearchData3
 from family_ops import get_access_token, validate_patent_number, extract_jurisdictions_and_members , load_api_credentials ,fetch_family_data_api , fetch_family_data_scrape
 from flask import Flask, request, send_file
 from pptx import Presentation
@@ -148,81 +149,116 @@ def create_app():
   
 
 
-    from datetime import datetime
-
     @app.route("/api/search_ops", methods=["POST"])
     def search_patents_ops():
+        """
+        Handles advanced patent search via EPO OPS API.
+        Accepts JSON body: { "query": { … }, "max_results": <int> }
+        Returns records augmented with computed years and abstract.
+        """
         data        = request.get_json(silent=True) or {}
-        q_input     = data.get("query_input")
+        q_input     = data.get("query")
         max_results = int(data.get("max_results", 500))
-        if not q_input:
-            return jsonify({"error": "provide 'query_input' JSON"}), 400
 
+        if not q_input:
+            return jsonify({"error": "Request must contain 'query' key."}), 400
+
+        # Build and execute CQL
+        start_time = time.perf_counter()
         try:
-            cql, total_cnt = None, None
-            cql = json_to_cql(q_input)
+            cql = json_to_cql({"query": q_input})
+            app.logger.debug(f"Generated CQL: {cql}")
             df, total_cnt = fetch_to_dataframe(cql, max_records=max_results)
         except Exception as e:
+            app.logger.error(f"OPS request failed: {e}")
             return jsonify({"error": f"OPS request failed: {e}"}), 502
 
+        elapsed = time.perf_counter() - start_time
+        app.logger.info(f"OPS fetch took {elapsed:.2f}s")
+
         if df.empty:
+            app.logger.info("No results found")
             return jsonify({"error": "no results"}), 404
 
-    # 1) Create a unique search_id for this query
+        # Debug: log DataFrame columns to verify field names
+        app.logger.debug(f"DataFrame columns: {df.columns.tolist()}")
+
+        # Prepare unique search ID
         search_id = str(uuid.uuid4())
 
-    # 2) Prepare raw_patents mappings using attribute names
+        # Convert dataframe to list of dicts and augment
         records = df.where(pd.notnull(df), None).to_dict(orient="records")
-        maps = []
-        for r in records:
-            pub_date = r["Publication date"]
-        # parse date string to date object if needed
-            try:
-                dt = datetime.strptime(pub_date, "%Y%m%d")
-            except ValueError:
-                dt = None
+        for rec in records:
+            # Debug: log record keys for mapping
+            app.logger.debug(f"Record keys: {list(rec.keys())}")
 
-            maps.append({
-                "title":                     r["Title"],
-                "inventors":                 r["Inventors"],
-                "applicants":                r["Applicants"],
-                "publication_number":        r["Publication number"],
-                "earliest_priority":         r["Earliest priority"],
-                "publication_date":          dt,
-                "ipc":                       r["IPC"],
-                "cpc":                       r["CPC"],
-                "applicant_country":         r.get("app_country") or r.get("Applicant country"),
-                "family_number":             r["Family number"],
-            # the extra fields:
-                "first_publication_date":    dt,
-                "first_filing_year":         dt.year if dt else None,
-                "first_publication_number":  r["Publication number"],
-                "first_publication_country": r["Publication number"][:2]
+            # First filing year from 'Publication date'
+            pub = rec.get("Publication date")
+            try:
+                pub_dt = datetime.strptime(pub, "%Y%m%d") if pub else None
+                rec["first_filing_year"] = pub_dt.year if pub_dt else None
+            except Exception:
+                rec["first_filing_year"] = None
+
+            # Earliest priority year: try multiple possible keys
+            prio_raw = rec.get("Earliest priority") or rec.get("Earliest priority date")
+            try:
+                prio_dt = datetime.strptime(prio_raw, "%Y-%m-%d") if prio_raw else None
+                rec["earliest_priority_year"] = prio_dt.year if prio_dt else None
+            except Exception:
+                rec["earliest_priority_year"] = None
+
+            # Abstract: try uppercase/lowercase
+            abstract = rec.get("Abstract") or rec.get("abstract") or rec.get("abstractText")
+            rec["abstract"] = abstract
+
+        # Store raw patents including new fields
+        mappings = []
+        for r in records:
+            # parse publication_date again for DB
+            pub_dt = None
+            try:
+                pub_dt = datetime.strptime(r.get("Publication date"), "%Y%m%d")
+            except Exception:
+                pass
+
+            mappings.append({
+                "title":                    r.get("Title"),
+                "inventors":                r.get("Inventors"),
+                "applicants":               r.get("Applicants"),
+                "publication_number":       r.get("Publication number"),
+                "publication_date":         pub_dt,
+                "ipc":                      r.get("IPC"),
+                "cpc":                      r.get("CPC"),
+                "applicant_country":        r.get("app_country") or r.get("Applicant country"),
+                "family_id":            r.get("Family number"),
+                "first_publication_number": r.get("Publication number"),
+                "first_publication_country": r.get("Publication number", "")[:2],
+                "first_filing_year":        r.get("first_filing_year"),
+                "earliest_priority_year":   r.get("earliest_priority_year"),
+                "abstract":                 r.get("abstract"),
             })
 
-    # 3) Wipe & bulk-insert into raw_patents
         db.session.query(RawPatent).delete()
-        db.session.bulk_insert_mappings(RawPatent, maps)
+        db.session.bulk_insert_mappings(RawPatent, mappings)
 
-        keyword_pairs = extract_keyword_pairs(q_input["query"]["group1"])
-
-        # insert one row per keyword, all sharing the same search_id & total_results
-        for field, word in keyword_pairs:
-            sk = SearchKeyword(
+        # Extract & store keywords
+        group1 = q_input.get("group1") if isinstance(q_input, dict) else None
+        for field, word in extract_keyword_pairs(group1) if group1 else []:
+            db.session.add(SearchKeyword(
                 search_id     = search_id,
-                field         = field,      # e.g. "title" or "abstract"
-                keyword       = word,       # the actual search term
-                total_results = total_cnt   # same total for each keyword
-            )
-            db.session.add(sk)
+                field         = field,
+                keyword       = word,
+                total_results = total_cnt
+            ))
         db.session.commit()
 
-    # 5) Return the response
+        # Return augmented records
         return jsonify({
-            "search_id"     : search_id,
-            "rows"          : len(maps),
-            "total_results" : total_cnt,
-            "data"          : records
+            "search_id":     search_id,
+            "rows":          len(records),
+            "total_results": total_cnt,
+            "data":          records
         }), 200
 
 
@@ -734,89 +770,210 @@ def create_app():
 
 
         
-    @app.route('/process_and_store', methods=['GET'])
-    def process_and_store():
-        """
-        Endpoint to check if store_processed_data works.
-        Requires ?confirm=true query parameter to proceed.
-        Returns JSON response indicating success or failure.
-        """
-        confirm = request.args.get('confirm', 'false').lower() == 'true'
-        if not confirm:
-            return jsonify({"message": "Operation not confirmed. Add ?confirm=true to proceed."}), 400
+    # @app.route('/process_and_store', methods=['GET'])
+    # def process_and_store():
+    #     """
+    #     Endpoint to check if store_processed_data works.
+    #     Requires ?confirm=true query parameter to proceed.
+    #     Returns JSON response indicating success or failure.
+    #     """
+    #     confirm = request.args.get('confirm', 'false').lower() == 'true'
+    #     if not confirm:
+    #         return jsonify({"message": "Operation not confirmed. Add ?confirm=true to proceed."}), 400
     
+    #     try:
+    #         logging.info("Starting data processing and storage.")
+    #         message = store_processed_data()
+    #         logging.info("Data processed and stored successfully.")
+    #         return jsonify({"message": message}), 200
+    #     except ValueError as e:
+    #         logging.error(f"Configuration error: {str(e)}")
+    #         return jsonify({"error": f"Configuration error: {str(e)}"}), 400
+    #     except FileNotFoundError as e:
+    #         logging.error(f"File not found: {str(e)}")
+    #         return jsonify({"error": f"File not found: {str(e)}"}), 404
+    #     except ParserError as e:
+    #         logging.error(f"Error parsing file: {str(e)}")
+    #         return jsonify({"error": f"Error parsing file: {str(e)}"}), 400
+    #     except SQLAlchemyError as e:
+    #         logging.error(f"Database error: {str(e)}")
+    #         return jsonify({"error": f"Database error: {str(e)}"}), 500
+    #     except Exception as e:
+    #         logging.error(f"Unexpected error: {str(e)}")
+    #         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+
+
+    # @app.route('/fetch_research_data', methods=['POST'])
+    # def fetch_research_data():
+    #     # Get query from the request
+    #     data = request.get_json()
+    #     query = data.get('query')
+
+    #     if not query:
+    #         return jsonify({'error': 'Query is required'}), 400
+
+    #     # Load impact factors from the database for processing
+    #     impact_factors_df = ImpactFactor.query.all()
+
+    #     # Fetch and process Semantic Scholar data
+    #     papers = fetch_research_data3(query)
+    #     if not papers:
+    #         return jsonify({'error': 'No papers found from Semantic Scholar or API error occurred'}), 500
+    #     sem_df = process_research_data3(papers, impact_factors_df)
+
+    #     # Add DOI cleaning for Semantic Scholar DataFrame
+    #     sem_df['doi_clean'] = sem_df['DOI'].apply(clean_doi)
+
+    #     # Fetch and process OpenAlex data
+    #     openalex_works = fetch_openalex_works(max_docs=300, per_page=200)
+    #     if not openalex_works:
+    #         return jsonify({'error': 'No works found from OpenAlex or API error occurred'}), 500
+    
+    #     # Use the new process_documents function with impact_factors_df
+    #     openalex_df = process_documents(openalex_works, journals_df=impact_factors_df)
+
+    #     # Clean DOI for OpenAlex DataFrame (ISSN cleaning is now handled in process_documents)
+    #     openalex_df['doi_clean'] = openalex_df['doi'].apply(clean_doi)
+
+    #     # Rename columns to ensure consistency before merging
+    #     sem_df, openalex_df = renaming_columns(sem_df, openalex_df)
+
+    #     # Merge the two DataFrames using merge_unique_by_doi
+    #     final_df = merge_unique_by_doi(sem_df, openalex_df)
+
+    #     # Store the merged DataFrame
+    #     store_research_data3(final_df)
+
+    #     # Return a success response
+    #     return jsonify({
+    #         'message': 'Research data fetched, merged, and stored successfully',
+    #         'papers_processed': len(final_df),
+    #         'semantic_scholar_papers': len(sem_df),
+    #         'openalex_papers': len(openalex_df)
+    #     }), 200
+        
+        
+        
+    @app.route('/api/scientific_search_merge', methods=['POST'])
+    def scientific_search_merge():
+        """
+        Accepts: { "query": <search_string> }
+        Searches both Semantic Scholar and OpenAlex with the query,
+        Filters and merges both datasets, stores merged result in research_data3 table.
+        Returns a summary JSON.
+        """
         try:
-            logging.info("Starting data processing and storage.")
-            message = store_processed_data()
-            logging.info("Data processed and stored successfully.")
-            return jsonify({"message": message}), 200
-        except ValueError as e:
-            logging.error(f"Configuration error: {str(e)}")
-            return jsonify({"error": f"Configuration error: {str(e)}"}), 400
-        except FileNotFoundError as e:
-            logging.error(f"File not found: {str(e)}")
-            return jsonify({"error": f"File not found: {str(e)}"}), 404
-        except ParserError as e:
-            logging.error(f"Error parsing file: {str(e)}")
-            return jsonify({"error": f"Error parsing file: {str(e)}"}), 400
-        except SQLAlchemyError as e:
-            logging.error(f"Database error: {str(e)}")
-            return jsonify({"error": f"Database error: {str(e)}"}), 500
+            # Parse JSON input
+            data = request.get_json()
+            query = data.get("query")
+            if not query:
+                return jsonify({"error": "Query is required"}), 400
+
+            # Load impact factors from DB for enrichment
+            impact_factors_df = db.session.query(ImpactFactor).all()
+
+            # Fetch Semantic Scholar papers (S2)
+            s2_papers = fetch_research_data3(query)
+            print("Semantic Scholar: records before filtering:", len(s2_papers))
+            if not s2_papers:
+                return jsonify({'error': 'No papers found from Semantic Scholar or API error occurred'}), 500
+            s2_df = process_research_data3(s2_papers, impact_factors_df)
+            print("Semantic Scholar: records after processing:", len(s2_df))
+            # Clean DOI in S2
+            s2_df['doi_clean'] = s2_df['DOI'].apply(clean_doi)
+
+            # Fetch OpenAlex works
+            openalex_works = fetch_openalex_works(query, max_docs=300, per_page=200)
+            print("OpenAlex: records before filtering:", len(openalex_works))
+
+            if not openalex_works:
+                return jsonify({'error': 'No works found from OpenAlex or API error occurred'}), 500
+            openalex_df = process_documents(openalex_works, journals_df=impact_factors_df)
+            openalex_df = filter_by_impact_factor(openalex_df, impact_factors_df)
+            print("OpenAlex: records after filtering:", len(openalex_df))
+            openalex_df['doi_clean'] = openalex_df['doi'].apply(clean_doi)
+
+            # Standardize columns and merge by DOI
+            s2_df, openalex_df = renaming_columns(s2_df, openalex_df)
+            final_df = merge_unique_by_doi(s2_df, openalex_df)
+
+            # Store in DB (research_data3 table)
+            print("About to store", len(final_df), "records")
+            print(final_df.head())
+
+            store_research_data3(final_df)
+
+            return jsonify({
+                'message': 'Scientific data fetched, merged, and stored successfully',
+                'papers_processed': len(final_df),
+                'semantic_scholar_papers': len(s2_df),
+                'openalex_papers': len(openalex_df)
+            }), 200
+
         except Exception as e:
-            logging.error(f"Unexpected error: {str(e)}")
-            return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
 
+        
+    @app.route('/api/research_field_trends', methods=['POST'])
+    def research_field_trends():
+        """
+        Returns count per year for selected fields of study from research_data3.
+        Expects JSON: { "fields": ["field1", "field2", ...] }
+        """
+        try:
+            data = request.get_json()
+            selected_fields = data.get("fields")
+            if not selected_fields or not isinstance(selected_fields, list):
+                return jsonify({"error": "Request must include a list of 'fields'"}), 400
 
+            # Query all records with year and fields_of_study
+            results = db.session.query(ResearchData3.year, ResearchData3.fields_of_study).filter(
+                ResearchData3.year.isnot(None),
+                ResearchData3.fields_of_study.isnot(None)
+            ).all()
 
+            # Count for each field and year
+            counts = {}
+            for year, field_list in results:
+                if not isinstance(field_list, list):
+                    # If stored as string, try to parse (Postgres can return list or stringified list)
+                    import ast
+                    try:
+                        field_list = ast.literal_eval(field_list)
+                    except Exception:
+                        continue
+                for field in field_list:
+                    if field in selected_fields:
+                        key = (year, field)
+                        counts[key] = counts.get(key, 0) + 1
 
-    @app.route('/fetch_research_data', methods=['POST'])
-    def fetch_research_data():
-        # Get query from the request
-        data = request.get_json()
-        query = data.get('query')
+            # Prepare for frontend
+            data_out = [
+                {"year": year, "field": field, "count": count}
+                for (year, field), count in counts.items()
+            ]
+            # Optionally, sort by year and field
+            data_out.sort(key=lambda x: (x["field"], x["year"]))
 
-        if not query:
-            return jsonify({'error': 'Query is required'}), 400
+            return jsonify(data_out), 200
 
-        # Load impact factors from the database for processing
-        impact_factors_df = ImpactFactor.query.all()
-
-        # Fetch and process Semantic Scholar data
-        papers = fetch_research_data3(query)
-        if not papers:
-            return jsonify({'error': 'No papers found from Semantic Scholar or API error occurred'}), 500
-        sem_df = process_research_data3(papers, impact_factors_df)
-
-        # Add DOI cleaning for Semantic Scholar DataFrame
-        sem_df['doi_clean'] = sem_df['DOI'].apply(clean_doi)
-
-        # Fetch and process OpenAlex data
-        openalex_works = fetch_openalex_works(max_docs=300, per_page=200)
-        if not openalex_works:
-            return jsonify({'error': 'No works found from OpenAlex or API error occurred'}), 500
-    
-        # Use the new process_documents function with impact_factors_df
-        openalex_df = process_documents(openalex_works, journals_df=impact_factors_df)
-
-        # Clean DOI for OpenAlex DataFrame (ISSN cleaning is now handled in process_documents)
-        openalex_df['doi_clean'] = openalex_df['doi'].apply(clean_doi)
-
-        # Rename columns to ensure consistency before merging
-        sem_df, openalex_df = renaming_columns(sem_df, openalex_df)
-
-        # Merge the two DataFrames using merge_unique_by_doi
-        final_df = merge_unique_by_doi(sem_df, openalex_df)
-
-        # Store the merged DataFrame
-        store_research_data3(final_df)
-
-        # Return a success response
-        return jsonify({
-            'message': 'Research data fetched, merged, and stored successfully',
-            'papers_processed': len(final_df),
-            'semantic_scholar_papers': len(sem_df),
-            'openalex_papers': len(openalex_df)
-        }), 200
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
+      
+        
+        
+        
+        
+        
+        
+        
+        
         
         
     @app.route('/top_keyword', methods=['GET'])
@@ -1869,62 +2026,7 @@ def create_app():
 
             
             
-            
-            
-            
-
-
-    # @app.route('/fetch_research_data', methods=['POST'])
-    # def fetch_research_data():
-    #     # Get query from the request
-    #     data = request.get_json()
-    #     query = data.get('query')
-    
-    #     if not query:
-    #         return jsonify({'error': 'Query is required'}), 400
-    
-    #     # Load impact factors from the database for Semantic Scholar processing
-    #     impact_factors = db.session.query(ImpactFactor).all()
-    
-    #     # Fetch and process Semantic Scholar data
-    #     # Note: Assumes fetch_research_data2 includes 'externalIds' in fields
-    #     papers = fetch_research_data3(query)
-    #     if not papers:
-    #         return jsonify({'error': 'No papers found from Semantic Scholar or API error occurred'}), 500
-    #     sem_df = process_research_data3(papers, impact_factors)
-    
-    #     # Add DOI cleaning for Semantic Scholar DataFrame
-    #     # Assumes 'DOI' is extracted in process_research_data2 from externalIds
-    #     sem_df['doi_clean'] = sem_df['DOI'].apply(clean_doi)
-    
-    #     # Fetch and process OpenAlex data
-    #     openalex_works = fetch_openalex_works(max_docs=300, per_page=200)
-    #     if not openalex_works:
-    #         return jsonify({'error': 'No works found from OpenAlex or API error occurred'}), 500
-    #     openalex_df = process_documents(openalex_works)
-    
-    #     # Clean ISSN and DOI for OpenAlex DataFrame
-    #     openalex_df['journal_issn_l_clean'] = openalex_df['journal_issn_l'].apply(clean_issn)
-    #     openalex_df['doi_clean'] = openalex_df['DOI'].apply(clean_doi)
-    
-    #     # Rename columns to ensure consistency before merging
-    #     sem_df, openalex_df = renaming_columns(sem_df, openalex_df)
-    
-    #     # Merge the two DataFrames using merge_unique_by_doi
-    #     final_df = merge_unique_by_doi(sem_df, openalex_df)
-    
-    #     # Store the merged DataFrame
-    #     store_research_data3(final_df)
-    
-    # # Return a success response
-    #     return jsonify({
-    #         'message': 'Research data fetched, merged, and stored successfully',
-    #         'papers_processed': len(final_df)
-    #     }), 200
-
-
-
-
+             
 
 
 
@@ -2856,7 +2958,32 @@ def create_app():
 
 
 
-        
+    @app.route('/api/research_publications_by_year', methods=['GET'])
+    def research_publications_by_year():
+        """
+        Retu1rns a list of {year, count} for publications in research_data3 table,
+        suitable for a publication trend chart.
+        """
+        try:
+            # Query all years from research_data3
+            results = (
+                db.session.query(ResearchData3.year, db.func.count(ResearchData3.id))
+                .group_by(ResearchData3.year)
+                .order_by(ResearchData3.year)
+                .all()
+            )
+            # Build response
+            data = [
+                {"year": int(year), "count": int(count)}
+                for year, count in results if year is not None
+            ]
+            return jsonify(data), 200
+        except Exception as e:
+            import traceback
+
+            print(traceback.format_exc())
+            return jsonify({"error": str(e)}), 500
+      
         
         
 

@@ -1,6 +1,7 @@
 // analysis-summary.tsx  (watermark-free)
 
 'use client';
+import LoadingSpinner from "./LoadingSpinner";
 import React, { useEffect, useState } from 'react';
 
 type MarketMetrics = { market_value: number; market_rate: number; mean_value: number };
@@ -71,7 +72,11 @@ export default function AnalysisSummaryCard() {
   }, []);
 
   if (!market || !coapp || innovation === null || !growth || !originality)
-    return <div className="py-12 flex justify-center text-gray-400">Loading analysis summary…</div>;
+    return (
+    <div className="py-12 flex justify-center">
+      <LoadingSpinner text="Loading analysis summary..." />
+    </div>
+  );
 
   const bulletsPresence = [
     `${coapp.coapplicant_rate}% co-applicant rate (${coapp.coapplicant_count} multi-applicant out of ${coapp.total_applications}).`,

@@ -104,7 +104,9 @@ const C = {
 /* ───────────────────────────────────────── */
 
 const NAV = [
+  { name: "Home", href: "/home" },
   { name: "Dashboard", href: "/" },
+
   { name: "Trend Analysis", href: "/trend-analysis" },
   { name: "Forecasting", href: "/forecasting" },
   { name: "Reporting", href: "/reporting" },
