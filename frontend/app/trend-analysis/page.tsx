@@ -54,7 +54,6 @@ const analysisCards = {
     
     { id: "publications-by-year", title: "Publications by Year" },
     { id: "citation-analysis", title: "Citation Analysis" },
-    { id: "collaboration-network", title: "Collaboration Network" },
     { id: "funding-analysis", title: "Funding Analysis" },
     { id: "research-field-trends", title: "Research Trend by Field" },
   ],
@@ -276,7 +275,7 @@ export default function TrendAnalysis() {
         </TabsContent>
 
         <TabsContent value="research" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {analysisCards.research.map((card) => (
               <div key={card.id} className={card.id === "research-field-trends" ? "col-span-full" : ""}>
                 {!visibleCards.includes(card.id) ? (
