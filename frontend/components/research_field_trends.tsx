@@ -20,6 +20,15 @@ const AVAILABLE_FIELDS = [
   'Biology',
   'Materials Science',
   'Environmental Science',
+  'Chemistry',
+  'Physics',
+  'Mathematics',
+  'Engineering',
+  'Agriculture',
+  'Geology',
+  'Psychology',
+  'Economics',
+  'Statistics',
 ];
 
 interface TrendData {
