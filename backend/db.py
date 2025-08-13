@@ -430,6 +430,32 @@ class PatentCost(db.Model):
         }
         
         
+class ResearchWindow(db.Model):
+    __tablename__ = 'research_windows'
+    id = db.Column(db.Integer, primary_key=True)
+    start_year = db.Column(db.Integer, nullable=False)
+    end_year = db.Column(db.Integer, nullable=False)
+    topics = db.relationship('ResearchTopic', backref='window', lazy=True)      
+        
+class ResearchTopic(db.Model):
+    __tablename__ = 'research_topics'
+    id = db.Column(db.Integer, primary_key=True)
+    window_id = db.Column(db.Integer, db.ForeignKey('research_windows.id'), nullable=False)
+    topic = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    fields = db.Column(db.Text, nullable=False)
+
+
+
+
+class ResearchDivergence(db.Model):
+    __tablename__ = 'research_divergences'
+    id = db.Column(db.Integer, primary_key=True)
+    from_year = db.Column(db.Integer, nullable=False)
+    to_year = db.Column(db.Integer, nullable=False)
+    divergence = db.Column(db.Float, nullable=False)
+
+        
         
 # class PatentOPS(db.Model):
 #     __tablename__ = "patent_ops"

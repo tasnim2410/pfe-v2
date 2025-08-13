@@ -14,19 +14,21 @@ const PublicationsByYear: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('http://localhost:53076/api/research_publications_by_year')
-      .then((res) => {
+    const fetchData = async () => {
+      try {
+        const port = (await (await fetch("/backend_port.txt")).text()).trim();
+        
+        const res = await fetch(`http://localhost:${port}/api/research_publications_by_year`);
         if (!res.ok) throw new Error('Failed to fetch data');
-        return res.json();
-      })
-      .then((json) => {
+        const json = await res.json();
         setData(json);
-        setLoading(false);
-      })
-      .catch((err) => {
+      } catch (err: any) {
         setError(err.message);
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+    fetchData();
   }, []);
 
   if (loading) return <Card><div>Loading...</div></Card>;

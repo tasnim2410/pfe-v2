@@ -13,6 +13,8 @@ const forecastData = [
   { year: "2026", patents: 490, research: 210, predicted: true },
 ]
 
+import PatentPublicationChart from "@/components/filing_vs_publication";
+
 export default function Forecasting() {
   return (
     <div className="container mx-auto px-6 py-8">
@@ -22,7 +24,7 @@ export default function Forecasting() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle>Patent Trend Forecast</CardTitle>
           </CardHeader>
@@ -38,7 +40,7 @@ export default function Forecasting() {
                   dataKey="patents"
                   stroke="#8884d8"
                   strokeWidth={2}
-                  strokeDasharray={(entry: any) => (entry?.predicted ? "5 5" : "0")}
+                    
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -60,10 +62,10 @@ export default function Forecasting() {
               </AreaChart>
             </ResponsiveContainer>
           </CardContent>
-        </Card>
+        </Card> */}
 
-        <Card className="lg:col-span-2">
-          <CardHeader>
+        {/* <Card className="lg:col-span-2">
+          <CardHeader>  
             <CardTitle>Combined Forecast Analysis</CardTitle>
           </CardHeader>
           <CardContent>
@@ -86,6 +88,16 @@ export default function Forecasting() {
                 <li>• Peak innovation period predicted for 2025-2026</li>
               </ul>
             </div>
+          </CardContent>
+        </Card> */}
+      </div>
+      <div className="mt-8">
+        <Card>
+          <CardHeader>
+            <CardTitle>Patent Filings vs. Publications</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PatentPublicationChart />
           </CardContent>
         </Card>
       </div>
