@@ -53,7 +53,9 @@ export default function ResearchFieldTrends() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:57495/api/research_field_trends', {
+      const port = (await (await fetch("/backend_port.txt")).text()).trim();
+      
+      const response = await fetch(`http://localhost:${port}/api/research_field_trends`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fields: selectedFields }),
