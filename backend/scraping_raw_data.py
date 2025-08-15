@@ -435,7 +435,7 @@ class EspacenetScraper:
                 self.enter_query_in_search_bar(query_string)
                 # Wait for search results to load (adjust locator as needed)
                 WebDriverWait(self.driver, 30).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "input"))  # Placeholder; inspect actual page
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "#result-list > div.publications-list-header__footer--vGECUEz4"))  # Placeholder; inspect actual page
                 )
                 # Add a random delay to mimic human behavior
                 self.add_random_delay(3, 5)
@@ -459,10 +459,19 @@ class EspacenetScraper:
                 # Step 1: Click "More Options" button
                 print("Looking for More Options button...")
                 more_options_selector = "#more-options-selector--publication-list-header"
-                more_options_button = WebDriverWait(self.driver, 30).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, more_options_selector))
-                )
-                print(f"More Options button found: {more_options_button}")
+                more_options_path = "/html/body/div/div/div[3]/div/div[4]/div[2]/div[1]/div[2]/div[4]/button"
+                try: 
+                    more_options_button = WebDriverWait(self.driver, 35).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, more_options_selector))
+                    )
+                    print(f"More Options button found by css selector: {more_options_button}")
+                except TimeoutException:
+                    print("More Options button not found by CSS selector, trying XPath...")
+                    more_options_button = WebDriverWait(self.driver, 35).until(
+                        EC.element_to_be_clickable((By.XPATH, more_options_path))
+                    )
+                    print(f"More Options button found by XPath: {more_options_button}")
+                    
                 
                 # Try to click, but handle intercepted clicks
                 try:

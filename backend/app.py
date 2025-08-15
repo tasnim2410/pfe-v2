@@ -49,10 +49,9 @@ import numpy as np
 from flask import jsonify
 import pandas as pd
 import math
-from collections import Counter
+from collections import Counter ,defaultdict
 from keywords_coccurrence_trends import track_cooccurrence_trends , clean_text_remove_stopwords
 from growth_rate import patent_growth_summary
-from collections import defaultdict
 from keyword_analysis import preprocess_text, analyze_topic_evolution
 import logging
 from patent_trend_by_field import get_ipc_meaning , normalize_engineering, get_patent_fields
@@ -63,8 +62,6 @@ import socket
 import re
 from dotenv import set_key
 from top_ipc_classes import get_ipc_codes_meanings
-import pandas as pd
-from collections import Counter
 from originality_rate import retrieve_citation_publication_numbers, get_patent_biblio, get_all_citations_ipc
 import random
 load_dotenv()
@@ -72,6 +69,7 @@ import signal
 import threading
 from werkzeug.serving import make_server
 from applicant_analysis import extract_applicant_collaboration_network
+from keyword_analysis2 import research_preprocess_text, research_analyze_topic_evolution , build_research_keyword_df
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
@@ -81,6 +79,7 @@ import os, time, requests
 from originality_rate import fetch_and_store_originality_data, calculate_originality_rate_from_db, OriginalityData
 from datetime import datetime
 import uuid
+from db import ResearchData3, ResearchWindow, ResearchTopic, ResearchDivergence  # research tables
 
 import os
 import time
@@ -479,6 +478,9 @@ def create_app():
     #     }
 
     #     return jsonify(response_data), 200
+    
+    
+    
     
     
     
@@ -2984,12 +2986,232 @@ def create_app():
             print(traceback.format_exc())
             return jsonify({"error": str(e)}), 500
       
+      
+      
+      
+        
+    @app.route('/api/research/processed_texts', methods=['GET'])
+    def research_processed_texts():
+        """
+        Research analogue of /api/processed_texts.
+        Returns preprocessed strings built from title+abstract.
+        """
+        try:
+            df = build_research_keyword_df()
+            if df.empty:
+                return jsonify({"error": "No records found in research_data3"}), 404
+
+            processed_list = [txt for txt in df['processed_title'].tolist() if txt]
+            if not processed_list:
+                return jsonify({"error": "No valid text to process"}), 400
+
+            return jsonify({"processed": processed_list}), 200
+        except Exception as e:
+            app.logger.error(f"Unexpected error in /api/research/processed_texts: {e}")
+            return jsonify({"error": str(e)}), 500    
+        
+        
+    @app.route('/api/research/topic_evolution', methods=['GET'])
+    def research_topic_evolution():
+        """
+        Research analogue of /api/topic_evolution (patents).
+        - Builds DF from research_data3 (title+abstract, year)
+        - Calls research_analyze_topic_evolution (no fallback in route)
+        - Stores ResearchWindow, ResearchDivergence, and ResearchTopic (mirrors patents)
+        """
+        try:
+            # 1) Build DF and pre-clean
+            keyword_df = build_research_keyword_df()
+            keyword_df = keyword_df.dropna(subset=['title', 'year'])
+            if keyword_df.empty:
+                return jsonify({"message": "No research docs with valid title/year"}), 404
+
+            # Avoid duplicate 'title' columns (keep preprocessed as title)
+            keyword_df = keyword_df.drop(columns=['title']).rename(columns={'processed_title': 'title'})
+            keyword_df['title'] = keyword_df['title'].astype(str)
+
+            # Optional min_year (?min_year=YYYY)
+            req_min_year = request.args.get('min_year', default=None, type=int)
+            if req_min_year is not None:
+                yint = pd.to_numeric(keyword_df['year'], errors='coerce').fillna(-1).astype(int)
+                mask = (yint >= req_min_year).to_numpy()
+                keyword_df = keyword_df.loc[mask].copy()
+
+            if keyword_df.empty:
+                return jsonify({"topic_evolution": [], "windows": [], "divergences": []}), 200
+
+            # 2) Analyze topic evolution (no route-level fallback)
+            topic_evolution_data, windows_data, divergences, valid_years = research_analyze_topic_evolution(keyword_df)
+
+            # 3) Clear and store ResearchWindow + ResearchDivergence + ResearchTopic
+            db.session.query(ResearchTopic).delete()
+            db.session.query(ResearchWindow).delete()
+            db.session.query(ResearchDivergence).delete()
+            db.session.commit()
+
+            # Windows
+            window_objects = []
+            for win in windows_data:
+                w = ResearchWindow(start_year=int(win['start']), end_year=int(win['end']))
+                db.session.add(w)
+                window_objects.append(w)
+            db.session.commit()
+
+            # Map (start, end) → window obj
+            window_idx = {(w.start_year, w.end_year): w for w in window_objects}
+
+            # Topics (store words+weights compactly in JSON string)
+            for t in topic_evolution_data:
+                w = window_idx.get((int(t['start']), int(t['end'])))
+                if not w:
+                    continue
+                topic_id_str  = t['topic_id']
+                topic_number  = int(topic_id_str.split('-')[-1])
+                words         = t['words']
+                weights       = [float(x) for x in t['weights']]
+                # short description: top 5 terms with weights
+                desc = "; ".join(f"{w_} ({weights[i]:.2f})" for i, w_ in enumerate(words[:5]))
+                fields_json = json.dumps({"words": words, "weights": weights})
+                db.session.add(ResearchTopic(
+                    window_id=w.id,
+                    topic=str(topic_number),
+                    description=desc,
+                    fields=fields_json
+                ))
+            db.session.commit()
+
+            # Divergences
+            for i in range(len(divergences)):
+                db.session.add(ResearchDivergence(
+                    from_year=int(valid_years[i]),
+                    to_year=int(valid_years[i + 1]),
+                    divergence=float(divergences[i])
+                ))
+            db.session.commit()
+
+            # 4) Query back & shape response (like patents endpoint)
+            windows = ResearchWindow.query.order_by(ResearchWindow.start_year).all()
+            topics  = (db.session.query(ResearchTopic)
+                       .join(ResearchWindow, ResearchTopic.window_id == ResearchWindow.id)
+                       .order_by(ResearchWindow.start_year, ResearchTopic.topic)
+                       .all())
+            divergences_q = ResearchDivergence.query.order_by(ResearchDivergence.from_year).all()
+
+            window_list = [{
+                'start': w.start_year,
+                'end':   w.end_year,
+                'years': list(range(w.start_year, w.end_year + 1))
+            } for w in windows]
+
+            topic_evolution_list = []
+            for t in topics:
+                w = t.window
+                data = json.loads(t.fields or '{}')
+                topic_evolution_list.append({
+                    'start':  w.start_year,
+                    'end':    w.end_year,
+                    'topic_id': f"{w.start_year}-{int(t.topic)}",
+                    'words':   data.get('words', []),
+                    'weights': data.get('weights', [])
+                })
+
+            divergences_list = [{
+                'from_year': d.from_year,
+                'to_year':   d.to_year,
+                'divergence': d.divergence
+            } for d in divergences_q]
+
+            return jsonify({
+                "topic_evolution": topic_evolution_list,
+                "windows": window_list,
+                "divergences": divergences_list
+            }), 200
+
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Error in /api/research/topic_evolution: {e}")
+            return jsonify({"error": f"Failed to process research topic evolution: {str(e)}"}), 500
         
         
 
 
 
-        
+    @app.route('/api/research/weighted_word_clouds', methods=['GET'])
+    def research_weighted_word_clouds():
+        """
+        Research analogue of /api/weighted_word_clouds (patents).
+        - Reads windows from ResearchWindow
+        - Reads topics from ResearchTopic; parses topic.fields JSON: {"words": [...], "weights": [...]} 
+        - Aggregates weights per word across all topics within the same window
+        - Returns: [{ start, end, words: [{word, weight}, ...] }, ...]
+        """
+        try:
+            logger = logging.getLogger(__name__)
+
+            # 1) Fetch windows in order
+            windows = ResearchWindow.query.order_by(ResearchWindow.start_year).all()
+            result = []
+
+            for window in windows:
+                # dict to sum weights per normalized word
+                word_weight_dict = defaultdict(float)
+
+                # 2) Get all topics belonging to this window
+                topics = ResearchTopic.query.filter_by(window_id=window.id).all()
+
+                for topic in topics:
+                    # 2.a) Parse the fields JSON safely
+                    try:
+                        payload = json.loads(topic.fields or "{}")
+                        words   = payload.get("words", []) or []
+                        weights = payload.get("weights", []) or []
+                    except Exception as e:
+                        logger.warning(f"Skipping research topic {topic.id}: invalid JSON in fields. err={e}")
+                        continue
+
+                    # 2.b) Validate aligned lengths
+                    if len(words) != len(weights):
+                        logger.warning(
+                            f"Skipping research topic {topic.id}: words/weights length mismatch "
+                            f"({len(words)} vs {len(weights)})"
+                        )
+                        continue
+
+                    # 2.c) Aggregate weights per word (normalize token, but keep original text as key)
+                    for w, wt in zip(words, weights):
+                        # normalize like patents endpoint
+                        processed = preprocess_text((w or "").lower())
+                        if processed and processed.strip():
+                            try:
+                                word_weight_dict[w] += float(wt)
+                            except Exception:
+                                # ignore non-numeric weights silently
+                                continue
+
+                    if not word_weight_dict:
+                        logger.info(f"No valid research words for window {window.start_year}-{window.end_year}")
+                        continue
+
+                    # 3) Sort words by aggregated weight desc
+                    word_list = [
+                        {"word": w, "weight": weight}
+                        for w, weight in sorted(word_weight_dict.items(), key=lambda x: x[1], reverse=True)
+                    ]
+
+                # 4) Append this window’s cloud
+                result.append({
+                    "start": window.start_year,
+                    "end": window.end_year,
+                    "words": word_list
+                })
+
+            logger.info(f"Generated research word cloud data for {len(result)} windows")
+            return jsonify(result), 200
+
+        except Exception as e:
+            logger.error(f"Error in research_weighted_word_clouds endpoint: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
         
         
         
