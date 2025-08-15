@@ -38,4 +38,7 @@ frontend/tsconfig.tsbuildinfo
 backend/.env
 frontend/public/backend_port.txt
 backend/outputs/
+__pycache__/
+*.pyc
+venv/**/__pycache__/
 
