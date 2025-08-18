@@ -3594,6 +3594,89 @@ def create_app():
 
         
         
+    @app.route('/api/research/papers', methods=['GET'])
+    def get_research_papers():
+        """
+        Fetches paper rows from research_data3 for the Papers tab.
+        No search parsing here—just returns stored results after /api/scientific_search_merge has populated the table.
+        Query params (optional):
+        - limit: max rows to return (default 500, max 2000)
+        - sort_by: 'citations' (default) or 'year'
+        - order: 'desc' (default) or 'asc'
+        Returns: [{ title, year, journal_name, fields_of_study, citation_count, reference_count, subcategory }, ...]
+        """
+        try:
+            # --- read query params with guardrails ---
+            limit = int(request.args.get('limit', 500))
+            limit = max(1, min(limit, 2000))
+            sort_by = (request.args.get('sort_by') or 'citations').lower()
+            order = (request.args.get('order') or 'desc').lower()
+
+            # --- choose sort column ---
+            order_col = ResearchData3.citation_count if sort_by != 'year' else ResearchData3.year
+            if order == 'asc':
+                order_by = order_col.asc().nullslast()
+            else:
+                order_by = order_col.desc().nullslast()
+
+            # --- query rows ---
+            rows = (
+                db.session.query(ResearchData3)
+                .order_by(order_by)
+                .limit(limit)
+                .all()
+        )
+
+            # --- serializer: keep exactly the fields your table needs ---
+            def parse_fos(fos_raw):
+                # fields_of_study may be JSON string, plain string, or list
+                if isinstance(fos_raw, list):
+                    return fos_raw
+                if isinstance(fos_raw, str):
+                    try:
+                        tmp = json.loads(fos_raw)
+                        if isinstance(tmp, list):
+                            return tmp
+                        if isinstance(tmp, str):
+                            return [tmp]
+                    except Exception:
+                        # comma-separated plain text
+                        return [s.strip() for s in fos_raw.split(",") if s.strip()]
+                return None
+
+            out = []
+            for r in rows:
+                journal = getattr(r, "journal_name", None) or getattr(r, "publication_venue_name", None)
+                out.append({
+                    "title": getattr(r, "title", None),
+                    "year": getattr(r, "year", None),
+                    "journal_name": journal,
+                    "fields_of_study": parse_fos(getattr(r, "fields_of_study", None)),
+                    "citation_count": getattr(r, "citation_count", None),
+                    "reference_count": getattr(r, "reference_count", None),
+                    "subcategory": getattr(r, "subcategory", None),
+                })
+
+            return jsonify(out), 200
+
+        except Exception as e:
+            app.logger.error(f"/api/research/papers error: {e}")
+            return jsonify({"error": str(e)}), 500
+  
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         
 
     @app.route('/api/report/generate-pptx', methods=['POST'])

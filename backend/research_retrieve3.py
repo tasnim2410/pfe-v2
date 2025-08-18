@@ -584,3 +584,151 @@ def store_research_data3(df):
     
     
     
+    
+    
+    def tokenize_query(q: str):
+        """
+        Tokenize a flat boolean string with AND/OR, parentheses and quoted phrases.
+        Returns a list like: ["(", "radar system", "AND", "mimo", ")", "OR", "fmcw"]
+        """
+        tokens = []
+        i, n = 0, len(q or "")
+        while i < n:
+            c = q[i]
+            if c.isspace():
+                i += 1
+                continue
+            if c in "()":
+                tokens.append(c)
+                i += 1
+                continue
+            if c in '"“”':  # quoted phrase
+                quote = c
+                i += 1
+                start = i
+                while i < n and q[i] not in '"“”':
+                    i += 1
+                phrase = q[start:i].strip()
+                tokens.append(phrase)
+                i += 1 if i < n else 0
+            continue
+            # word (consume until space or paren)
+            start = i
+            while i < n and (not q[i].isspace()) and q[i] not in "()":
+                i += 1
+            word = q[start:i].strip()
+            if word:
+                tokens.append(word)
+        return tokens
+
+
+def to_rpn(tokens):
+    """
+    Shunting-yard to convert infix tokens (AND/OR) to RPN.
+    Precedence: AND > OR. Parentheses respected.
+    Non-operator tokens are treated as terms/phrases.
+    """
+    prec = {"AND": 2, "OR": 1}
+    out, op = [], []
+    for t in tokens:
+        u = t.upper()
+        if u in ("AND", "OR"):
+            while op and op[-1] in prec and prec[op[-1]] >= prec[u]:
+                out.append(op.pop())
+            op.append(u)
+        elif t == "(":
+            op.append(t)
+        elif t == ")":
+            while op and op[-1] != "(":
+                out.append(op.pop())
+            if op and op[-1] == "(":
+                op.pop()
+        else:
+            out.append(t)
+    while op:
+        out.append(op.pop())
+    return out
+
+
+def leaf_condition(term: str):
+    """
+    Build the per-term condition against multiple text fields (OR across fields).
+    We search title + abstract + fields_of_study string. Adjust/add fields if needed.
+    """
+    pat = f"%{term}%"
+    conds = []
+    # Defensive getattr to avoid AttributeErrors if schema differs
+    if hasattr(ResearchData3, "title"):
+        conds.append(ResearchData3.title.ilike(pat))
+    if hasattr(ResearchData3, "abstract"):
+        conds.append(ResearchData3.abstract.ilike(pat))
+    if hasattr(ResearchData3, "fields_of_study"):
+        # fields_of_study may be JSON/text; string match is fine
+        conds.append(ResearchData3.fields_of_study.ilike(pat))
+    # If none of the above exist, fall back to a harmless true filter
+    return or_(*conds) if conds else True
+
+
+def build_sqlalchemy_filter(query_str: str):
+    """
+    Parse the boolean string into a SQLAlchemy expression:
+    - tokens -> RPN
+    - build stack of conditions using AND/OR
+    - leaves are OR across (title, abstract, fields_of_study)
+    If parsing fails or query empty, returns True (no filter).
+    """
+    if not query_str or not query_str.strip():
+        return True
+    tokens = tokenize_query(query_str)
+    # Normalize AND/OR tokens, keep phrases/words as-is; drop stray parentheses-only input
+    if not any(t for t in tokens if t not in ("(", ")")):
+        return True
+    rpn = to_rpn(tokens)
+    stack = []
+    for t in rpn:
+        u = t.upper()
+        if u == "AND":
+            if len(stack) >= 2:
+                b = stack.pop(); a = stack.pop()
+                stack.append(and_(a, b))
+        elif u == "OR":
+            if len(stack) >= 2:
+                b = stack.pop(); a = stack.pop()
+                stack.append(or_(a, b))
+        else:
+            stack.append(leaf_condition(t))
+    return stack[0] if stack else True
+
+
+def row_to_paper_dict(r):
+    """
+    Serialize a research_data3 ORM row into the columns needed by the Papers tab.
+    Safely handles JSON/text for fields_of_study.
+    """
+    # journal_name can exist under different names; prefer journal_name, else publication_venue_name
+    jname = getattr(r, "journal_name", None) or getattr(r, "publication_venue_name", None)
+    fos_raw = getattr(r, "fields_of_study", None)
+    fos = None
+    if isinstance(fos_raw, str):
+        try:
+            tmp = json.loads(fos_raw)
+            if isinstance(tmp, list):
+                fos = tmp
+            elif isinstance(tmp, str):
+                fos = [tmp]
+        except Exception:
+            # treat as comma-separated string
+            fos = [s.strip() for s in fos_raw.split(",") if s.strip()]
+    elif isinstance(fos_raw, list):
+        fos = fos_raw
+    # build dict
+    return {
+        "id": getattr(r, "id", None),
+        "title": getattr(r, "title", None),
+        "year": getattr(r, "year", None),
+        "journal_name": jname,
+        "fields_of_study": fos,
+        "citation_count": getattr(r, "citation_count", None),
+        "reference_count": getattr(r, "reference_count", None),
+        "subcategory": getattr(r, "subcategory", None),
+    }
