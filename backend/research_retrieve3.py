@@ -97,6 +97,17 @@ def process_research_data3(papers, impact_factors=None):
 
         authors = paper.get('authors', [])
         author_names = [author.get('name', '') for author in authors]
+        
+        # Extract authorship countries from author affiliations
+        authorship_countries = []
+        for author in authors:
+            affiliations = author.get('affiliations', [])
+            for affiliation in affiliations:
+                if isinstance(affiliation, dict) and affiliation.get('country'):
+                    authorship_countries.append(affiliation['country'])
+        # Remove duplicates while preserving order
+        authorship_countries = list(dict.fromkeys(authorship_countries))
+        
         pub_date = parse_date(paper.get('publicationDate'))
         
         doi = None
@@ -118,6 +129,7 @@ def process_research_data3(papers, impact_factors=None):
             'publication_types': paper.get('publicationTypes', []),
             'publication_date': pub_date,
             'authors': ', '.join(author_names)[:255] if author_names else None,
+            'authorship_countries': authorship_countries,
             'DOI': doi,
             'ISSN': issn
         }
@@ -568,3 +580,7 @@ def store_research_data3(df):
         db.session.add(research_entry)
     
     db.session.commit()
+    
+    
+    
+    

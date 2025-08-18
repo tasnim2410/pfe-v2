@@ -25,6 +25,12 @@ import FamilySizeDistributionChart from "@/components/family-size-distribution";
 import InternationalProtectionMatrixChart from "@/components/international-protection-matrix";
 import InternationalPatentFlowChart from "@/components/international-patent-flow";
 import GeographicalDistribution from "@/components/geographical_distribution";  
+import ThemeByTimeWindow from "@/components/research_evolving_word_cloud";
+import ResearchTopicShiftTrend from "@/components/research_topic_shift_trend";
+import ResearchCooccurenceTrends from "@/components/research_cooccurence_trends";
+import ResearchCitationPercentiles from "@/components/research_citation_percentiles";
+import ResearchCitationsPerYearStats from "@/components/research_citations_per_year_stats";
+import ResearchCitationInequality from "@/components/research_citation_inequality";
 
 const analysisCards = {
   patents: [
@@ -50,12 +56,16 @@ const analysisCards = {
     ],
   research: [
     
-    { id: "research-trend", title: "Research Publication Trend" },
-    
+    { id: "research-cooccurence-trends", title: "Co-occurrence Trends" },
+    { id: "research-citation-percentiles", title: "Citation Percentiles" },
+    { id: "research-citations-per-year-stats", title: "Citations per Year (Age-normalized)" },    
     { id: "publications-by-year", title: "Publications by Year" },
-    { id: "citation-analysis", title: "Citation Analysis" },
-    { id: "funding-analysis", title: "Funding Analysis" },
+    { id: "research-evolving-word-cloud", title: "Evolving Word Cloud" },
+    { id: "research-citation-inequality", title: "Citation Inequality" },
+    // { id: "research-topic-shift-trend", title: "Topic Shift Trend" },
     { id: "research-field-trends", title: "Research Trend by Field" },
+    
+    
   ],
 }
 
@@ -97,15 +107,19 @@ export default function TrendAnalysis() {
 
   
   // ────────────────────────────────────────────────────────────────
-  //  EXPAND / COLLAPSE ALL  (patent tab only)
+  //  EXPAND / COLLAPSE ALL  (patent tab and research tab)
   // ────────────────────────────────────────────────────────────────
   // IDs of every chart in the “Patent Analysis” tab
   const allPatentIds = analysisCards.patents.map(c => c.id);
+  // IDs of every chart in the “Research” tab
+  const allResearchIds = analysisCards.research.map(c => c.id);
 
   // Are *all* patent charts currently visible?
   const allExpanded = allPatentIds.every(id => visibleCards.includes(id));
+  // Are *all* research charts currently visible?
+  const allResearchExpanded = allResearchIds.every(id => visibleCards.includes(id));
 
-  // Toggle handler
+  // Toggle handler for patents
   const toggleAllPatents = () => {
     if (allExpanded) {
       // Collapse → remove those IDs from the visible / selected arrays
@@ -117,6 +131,18 @@ export default function TrendAnalysis() {
       setSelectedCharts(sc => Array.from(new Set([...sc, ...allPatentIds])));
     }
   };
+
+  // Toggle handler for research
+  const toggleAllResearch = () => {
+    if (allResearchExpanded) {
+      setVisibleCards(vc => vc.filter(id => !allResearchIds.includes(id)));
+      setSelectedCharts(sc => sc.filter(id => !allResearchIds.includes(id)));
+    } else {
+      setVisibleCards(vc => Array.from(new Set([...vc, ...allResearchIds])));
+      setSelectedCharts(sc => Array.from(new Set([...sc, ...allResearchIds])));
+    }
+  };
+
 
   const renderChart = (cardId: string) => {
     switch (cardId) {
@@ -169,6 +195,18 @@ export default function TrendAnalysis() {
         return <ResearchFieldTrends />;
       case "publications-by-year":
         return <PublicationsByYear />;
+      case "research-evolving-word-cloud":
+        return <ThemeByTimeWindow />;
+      case "research-topic-shift-trend":
+        return <ResearchTopicShiftTrend />;
+      case "research-cooccurence-trends":
+        return <ResearchCooccurenceTrends />;
+      case "research-citation-percentiles":
+        return <ResearchCitationPercentiles />;
+      case "research-citations-per-year-stats":
+        return <ResearchCitationsPerYearStats />;
+      case "research-citation-inequality":
+        return <ResearchCitationInequality />;
 
     case "citation-analysis":              // 📊 stacked bar mock
       return (
@@ -275,6 +313,12 @@ export default function TrendAnalysis() {
         </TabsContent>
 
         <TabsContent value="research" className="space-y-4">
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={toggleAllResearch}
+              className="bg-[#BDD248] text-white hover:bg-[#546472] transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-gray-400">
+              {allResearchExpanded ? "Collapse All" : "Expand All"}
+            </Button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {analysisCards.research.map((card) => (
               <div key={card.id} className={card.id === "research-field-trends" ? "col-span-full" : ""}>

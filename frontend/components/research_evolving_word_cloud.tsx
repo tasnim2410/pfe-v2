@@ -17,19 +17,48 @@ const cardStyle: React.CSSProperties = {
   margin: "0 auto"
 };
 
-const tabStyle = (active: boolean): React.CSSProperties => ({
-  padding: "10px 22px",
+const tabStyle = (active: boolean, compact = false): React.CSSProperties => ({
+  // compact=true → tighter pills so more items fit per line
+  padding: compact ? "8px 14px" : "10px 22px",
   borderRadius: 8,
   background: active ? "#BDD248" : "#f2f5ec",
   color: active ? ACCENT : "#63735A",
   fontWeight: 700,
-  margin: "0 7px",
+  // no horizontal margin in compact grid mode (the grid gap handles spacing)
+  margin: compact ? "0" : "0 7px",
   border: "none",
   cursor: "pointer",
-  fontSize: 16,
+  fontSize: compact ? 14 : 16,
   boxShadow: active ? "0 2px 12px #BDD24866" : undefined,
   transition: "background 0.15s"
 });
+
+const tabsWrapStyle = (twoRows: boolean): React.CSSProperties => (
+  twoRows
+    ? {
+        // Force exactly TWO ROWS using CSS Grid
+        display: "grid",
+        gridAutoFlow: "column",             // fill by columns
+        gridTemplateRows: "repeat(2, auto)",// exactly 2 rows
+        gap: "10px 12px",                   // row x column gaps
+        justifyContent: "center",
+        alignItems: "center",
+        marginBottom: 26,
+        width: "100%",
+        overflowX: "auto",                  // if too many, allow horizontal scroll
+        paddingBottom: 6
+      }
+    : {
+        // Single row (original layout)
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 12,
+        marginBottom: 26,
+        width: "100%"
+      }
+);
+
 
 const weightBar = (weight: number, max: number) => ({
   display: "inline-block",
@@ -129,11 +158,13 @@ const ThemeByTimeWindow: React.FC = () => {
   return (
     <div style={cardStyle}>
       {/* Time window tabs */}
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 26 }}>
+      <div style={tabsWrapStyle((data?.length || 0) > 6)}>
+
         {data.map((w, i) => (
           <button
             key={i}
-            style={tabStyle(i === selected)}
+            style={tabStyle(i === selected, (data?.length || 0) > 6)}
+
             onClick={() => setSelected(i)}
           >
             {w.start}–{w.end}
