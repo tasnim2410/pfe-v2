@@ -3212,10 +3212,386 @@ def create_app():
             logger.error(f"Error in research_weighted_word_clouds endpoint: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
+    
+    
+    
+    @app.route('/api/research/automatic_topic_shift', methods=['GET'])
+    def research_automatic_topic_shift():
+        """
+        Research analogue of /api/automatic_topic_shift.
+
+        - Reads divergence deltas between consecutive years from research_divergences
+        - Computes a robust threshold (80th percentile) to flag "large" shifts
+        - Returns both the raw divergences and the window boundaries from research_windows
+        """
+        try:
+            # 1) Pull divergence series for research papers (ordered by year)
+            divergences = ResearchDivergence.query.order_by(ResearchDivergence.from_year).all()
+            if not divergences:
+                # Same behavior as patents: return 200 with a friendly message if nothing to show
+                return jsonify({"message": "No research divergence data available"}), 200
+
+            # 2) Threshold to highlight big jumps (80th percentile is a good default)
+            divergence_values = [float(d.divergence) for d in divergences]
+            threshold = np.percentile(divergence_values, 80) if divergence_values else 0.0
+
+            # 3) Pull detected time windows for the research corpus
+            windows = ResearchWindow.query.order_by(ResearchWindow.start_year).all()
+
+            # 4) Format payloads for the UI
+            divergence_data = [
+                {
+                    "from_year": int(d.from_year),
+                    "to_year": int(d.to_year),
+                    "divergence": float(d.divergence),
+                }
+                for d in divergences
+            ]
+
+            window_list = [
+                {
+                    "start": int(w.start_year),
+                    "end": int(w.end_year),
+                }
+                for w in windows
+            ]
+
+            # 5) Ship JSON (mirrors patent endpoint structure for easy frontend reuse)
+            response = {
+                "divergence_data": divergence_data,
+                "threshold": float(threshold),
+                "windows": window_list,
+            }
+            return jsonify(response), 200
+
+        except Exception as e:
+            # Mirror the patent endpoint’s error handling
+            return jsonify({"error": str(e)}), 500
+    
         
+    
+    
+    @app.route('/api/research/cooccurrence_trends', methods=['GET'])
+    def research_cooccurrence_trends():
+        """
+        Returns JSON data for plotting co-occurrence trends of *research* keyword pairs.
+        - Uses research_data3 (title + abstract + year)
+        - Removes English & French stopwords
+        - Ensures term pairs are not identical (case-insensitive)
+        Query params (optional):
+        - window_size: sliding window size for co-occurrence (default 5)
+        - min_count:   minimum total co-occurrence count to keep a pair (default 10)
+        - top:         number of top emerging/declining pairs to include (default 5)
+        """
+        try:
+            # ---- 0) Read params (defaults mirror the patent endpoint) ----
+            window_size = int(request.args.get('window_size', 5))
+            min_count   = int(request.args.get('min_count', 10))
+            top_k       = int(request.args.get('top', 5))
+
+            # ---- 1) Fetch research data (title + abstract + year) ----
+            # We concatenate title & abstract to enrich context before co-occurrence.
+            query = 'SELECT title, abstract, year FROM research_data3'
+            df = pd.read_sql(query, engine)
+
+            # Keep only rows with a valid year
+            df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+            df = df.dropna(subset=['year'])
+            df['year'] = df['year'].astype(int)
+
+            # ---- 2) Build unified text field and clean stopwords ----
+            df['text'] = (df['title'].fillna('') + ' ' + df['abstract'].fillna('')).str.strip()
+            # remove EN+FR stopwords & punctuation (same helper as the patents endpoint)
+            df['text'] = df['text'].apply(clean_text_remove_stopwords)  # :contentReference[oaicite:1]{index=1}
+
+            # Remove empty docs after cleaning
+            df = df[df['text'].str.strip().astype(bool)]
+            if df.empty:
+                return jsonify({
+                    "emerging": [],
+                    "declining": [],
+                    "emerging_pairs": [],
+                    "declining_pairs": []
+                }), 200
+
+            # ---- 3) Prepare grouped DataFrame (one concatenated string per year) ----
+            # This mirrors what you do for patents: group texts within the same year, then join.
+            grouped = df.groupby('year')['text'].apply(lambda texts: " ".join(texts)).reset_index()
+
+            # ---- 4) Run co-occurrence trend analysis ----
+            # Sliding-window co-occurrence + per-year frequencies + linear trend (slope, p-value).
+            cooc_trends = track_cooccurrence_trends(
+                grouped,
+                time_col='year',
+                text_col='text',
+                window_size=window_size,
+                min_count=min_count
+            )  # :contentReference[oaicite:2]{index=2}
+
+            if cooc_trends.empty:
+                return jsonify({
+                    "emerging": [],
+                    "declining": [],
+                    "emerging_pairs": [],
+                    "declining_pairs": []
+                }), 200
+
+            # ---- 5) Filter out identical pairs (case-insensitive) ----
+            cooc_trends = cooc_trends[
+                cooc_trends['term1'].str.lower() != cooc_trends['term2'].str.lower()
+            ]
+
+            # ---- 6) Select top emerging & declining pairs (significant slopes) ----
+            emerging_tech = cooc_trends[
+                (cooc_trends.slope > 0) & (cooc_trends.p_value < 0.05)
+            ].sort_values('slope', ascending=False).head(top_k)
+
+            declining_tech = cooc_trends[
+                (cooc_trends.slope < 0) & (cooc_trends.p_value < 0.05)
+            ].sort_values('slope').head(top_k)
+
+            # ---- 7) Shape time-series points for plotting ----
+            def prepare_plot_data(df_in):
+                plot_data = []
+                for _, row in df_in.iterrows():
+                    # frequency_history is a list of (year, freq) pairs
+                    for year, freq in row['frequency_history']:
+                        plot_data.append({
+                            'year': int(year),
+                            'frequency': int(freq),
+                            'term_pair': f"{row['term1']} & {row['term2']}"
+                        })
+                return plot_data
+
+            response = {
+                "emerging": prepare_plot_data(emerging_tech),
+                "declining": prepare_plot_data(declining_tech),
+                "emerging_pairs": [
+                    {
+                        "term1": row['term1'],
+                        "term2": row['term2'],
+                        "slope": row['slope'],
+                        "total_count": row['total_count']
+                    }
+                    for _, row in emerging_tech.iterrows()
+                ],
+                "declining_pairs": [
+                    {
+                        "term1": row['term1'],
+                        "term2": row['term2'],
+                        "slope": row['slope'],
+                        "total_count": row['total_count']
+                    }
+                    for _, row in declining_tech.iterrows()
+                ]
+            }
+            return jsonify(response), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    
+    
+    @app.route('/api/research/citations_per_year_stats', methods=['GET'])
+    def research_citations_per_year_stats():
+        """
+        Analysis #1 — Age-normalized impact per cohort (citations per year).
+        Uses research_data3.year and research_data3.citation_count.
+        Optional query params:
+        - min_year, max_year: restrict the cohort range.
+        Returns a list of {year, n_papers, total_citations, mean_citations, median_citations,
+                           mean_citations_per_year, median_citations_per_year}.
+        """
+        try:
+            # 1) Pull minimal columns from DB
+            rows = (
+                db.session.query(ResearchData3.year, ResearchData3.citation_count)
+                .filter(ResearchData3.year.isnot(None))
+                .all()
+            )
+            if not rows:
+                return jsonify([]), 200
+
+            # 2) To DataFrame and drop NaNs
+            df = pd.DataFrame(rows, columns=['year', 'citation_count']).dropna()
+            # Enforce integer year and non-negative citations
+            df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+            df['citation_count'] = pd.to_numeric(df['citation_count'], errors='coerce').fillna(0).clip(lower=0).astype(int)
+            df = df.dropna(subset=['year'])
+            df['year'] = df['year'].astype(int)
+
+            # Optional year filter
+            min_year = request.args.get('min_year', type=int)
+            max_year = request.args.get('max_year', type=int)
+            if min_year is not None:
+                df = df[df['year'] >= min_year]
+            if max_year is not None:
+                df = df[df['year'] <= max_year]
+            if df.empty:
+                return jsonify([]), 200
+
+            # 3) Age-normalize citations: CPY = citations / (current_year - year + 1)
+            current_year = datetime.now().year
+            age = (current_year - df['year'] + 1).clip(lower=1)
+            df = df.assign(cpy=df['citation_count'] / age)
+
+            # 4) Aggregate per year
+            grouped = df.groupby('year')
+            out = []
+            for yr, g in grouped:
+                cits = g['citation_count'].to_numpy()
+                cpy = g['cpy'].to_numpy()
+                out.append({
+                    "year": int(yr),
+                    "n_papers": int(len(g)),
+                    "total_citations": int(cits.sum()),
+                    "mean_citations": float(cits.mean()),
+                    "median_citations": float(np.median(cits)),
+                    "mean_citations_per_year": float(cpy.mean()),
+                    "median_citations_per_year": float(np.median(cpy)),
+                })
+            out.sort(key=lambda d: d["year"])
+            return jsonify(out), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    
+    
+    @app.route('/api/research/citation_percentiles', methods=['GET'])
+    def research_citation_percentiles():
+        """
+        Analysis #2 — Percentiles & top-decile concentration per year.
+        For each year: P50, P90, P99 of citation_count, plus the share of total citations
+        captured by the top 10% most-cited papers (by that year's distribution).
+        Optional query params: min_year, max_year
+        """
+        try:
+            rows = (
+                db.session.query(ResearchData3.year, ResearchData3.citation_count)
+                .filter(ResearchData3.year.isnot(None))
+                .all()
+            )
+            if not rows:
+                return jsonify([]), 200
+
+            df = pd.DataFrame(rows, columns=['year', 'citation_count']).dropna()
+            df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+            df['citation_count'] = pd.to_numeric(df['citation_count'], errors='coerce').fillna(0).clip(lower=0).astype(int)
+            df = df.dropna(subset=['year'])
+            df['year'] = df['year'].astype(int)
+
+            min_year = request.args.get('min_year', type=int)
+            max_year = request.args.get('max_year', type=int)
+            if min_year is not None:
+                df = df[df['year'] >= min_year]
+            if max_year is not None:
+                df = df[df['year'] <= max_year]
+            if df.empty:
+                return jsonify([]), 200
+
+            out = []
+            for yr, g in df.groupby('year'):
+                arr = g['citation_count'].to_numpy()
+                if arr.size == 0:
+                    continue
+                total = arr.sum()
+                p50 = float(np.percentile(arr, 50))
+                p90 = float(np.percentile(arr, 90))
+                p99 = float(np.percentile(arr, 99))
+                # top-decile threshold and what fraction of total citations it captures
+                thresh = np.percentile(arr, 90)
+                top_mask = arr >= thresh
+                top_share = float(arr[top_mask].sum() / total) if total > 0 else 0.0
+                out.append({
+                    "year": int(yr),
+                    "n_papers": int(arr.size),
+                    "p50": p50,
+                    "p90": p90,
+                    "p99": p99,
+                    "top10_threshold": float(thresh),
+                    "top10_share_of_citations": top_share
+                })
+            out.sort(key=lambda d: d["year"])
+            return jsonify(out), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    
+    
+    
         
-        
-        
+    def gini_coefficient(x: np.ndarray) -> float:
+        """Compute Gini on non-negative vector x. Returns 0..1. Empty or all-zero → 0."""
+        x = np.asarray(x, dtype=float)
+        if x.size == 0:
+            return 0.0
+        if np.all(x == 0):
+            return 0.0
+        if np.any(x < 0):
+            x = np.clip(x, 0, None)
+        # Mean absolute difference / (2 * mean)
+        mad = np.abs(np.subtract.outer(x, x)).mean()
+        mean = x.mean()
+        return float(mad / (2 * mean))
+
+
+    @app.route('/api/research/citation_inequality', methods=['GET'])
+    def research_citation_inequality():
+        """
+        Analysis #3 — Inequality of attention.
+        For each year: Gini coefficient of citations and concentration captured by top decile & top 1%.
+        Optional query params: min_year, max_year
+        """
+        try:
+            rows = (
+                db.session.query(ResearchData3.year, ResearchData3.citation_count)
+                .filter(ResearchData3.year.isnot(None))
+                .all()
+            )
+            if not rows:
+                return jsonify([]), 200
+
+            df = pd.DataFrame(rows, columns=['year', 'citation_count']).dropna()
+            df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+            df['citation_count'] = pd.to_numeric(df['citation_count'], errors='coerce').fillna(0).clip(lower=0).astype(int)
+            df = df.dropna(subset=['year'])
+            df['year'] = df['year'].astype(int)
+
+            min_year = request.args.get('min_year', type=int)
+            max_year = request.args.get('max_year', type=int)
+            if min_year is not None:
+                df = df[df['year'] >= min_year]
+            if max_year is not None:
+                df = df[df['year'] <= max_year]
+            if df.empty:
+                return jsonify([]), 200
+
+            out = []
+            for yr, g in df.groupby('year'):
+                arr = g['citation_count'].to_numpy()
+                total = arr.sum()
+                gini = gini_coefficient(arr)
+                # Decile & top-1% concentration
+                d90 = np.percentile(arr, 90)
+                d99 = np.percentile(arr, 99)
+                top10_share = float(arr[arr >= d90].sum() / total) if total > 0 else 0.0
+                top1_share  = float(arr[arr >= d99].sum() / total) if total > 0 else 0.0
+
+                out.append({
+                    "year": int(yr),
+                    "n_papers": int(arr.size),
+                    "gini": gini,
+                    "top10_share_of_citations": top10_share,
+                    "top1_share_of_citations": top1_share
+                })
+            out.sort(key=lambda d: d["year"])
+            return jsonify(out), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
         
         
         

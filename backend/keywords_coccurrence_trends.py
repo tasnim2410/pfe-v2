@@ -41,6 +41,7 @@ def clean_text_remove_stopwords(text):
     if not isinstance(text, str):
         return ""
     text = text.lower()
+    text = re.sub(r'\b(\d+)\s*(ghz|mhz|khz|hz|v|w|kw|mw|db|dbi)\b', r'\1\2', text)
     text = re.sub(r"[^\w\s]", " ", text)
     tokens = [w for w in text.split() if w not in CUSTOM_STOPWORDS]
     return " ".join(tokens)
@@ -128,82 +129,4 @@ def track_cooccurrence_trends(df: pd.DataFrame,
         })
     
     return pd.DataFrame(trend_data)
-  
-# keyword_df = df[['first publication number','Title','first filing year']]
-# keyword_df = keyword_df.dropna-*+4
-# 00000(subset=['Title'])+
-# grouped = keyword_df.groupby("first filing year")["Title"].apply(lambda texts: " ".join(texts)).reset_index()
-
-# # Example usage:
-# cooc_trends = track_cooccurrence_trends(
-#     grouped,
-#     time_col='first filing year',
-#     text_col='Title',
-#     window_size=5,
-#     min_count=10
-# )
-
-# # Get top emerging combinations
-# emerging_tech = cooc_trends[
-#     (cooc_trends.slope > 0) &
-#     (cooc_trends.p_value < 0.05)
-# ].sort_values('slope', ascending=False)
-
-# print("Top emerging technology combinations:")
-# print(emerging_tech[['term1', 'term2', 'slope', 'total_count']].head(5))
-
-# # Select top term pairs for visualization
-# top_terms = emerging_tech.head(5)  # Adjust the number as needed
-
-# # Prepare data for plotting
-# plot_data = []
-# for _, row in top_terms.iterrows():
-#     for year, freq in row['frequency_history']:
-#         plot_data.append({
-#             'year': year,
-#             'frequency': freq,
-#             'term_pair': f"{row['term1']} & {row['term2']}"
-#         })
-
-# plot_df = pd.DataFrame(plot_data)
-# # Set the aesthetic style of the plots
-# sns.set(style="whitegrid")
-
-# # Create the line plot
-# plt.figure(figsize=(12, 6))
-# sns.lineplot(data=plot_df, x='year', y='frequency', hue='term_pair', marker='o')
-# plt.title('Co-occurrence Trends of Top Emerging Technology Combinations Over Time')
-# plt.xlabel('Year')
-# plt.ylabel('Frequency')
-# plt.legend(title='Term Pairs', bbox_to_anchor=(1.05, 1), loc='upper left')
-# plt.grid()
-# plt.tight_layout()  # Adjust layout to make room for the legend
-# plt.show()
-
-# declining_tech = cooc_trends[
-#     (cooc_trends.slope < 0) &
-#     (cooc_trends.p_value < 0.05)
-# ].sort_values('slope')
-
-# # Prepare data for visualization of declining trends
-# decline_plot_data = []
-# for _, row in declining_tech.iterrows():
-#     for year, freq in row['frequency_history']:
-#         decline_plot_data.append({
-#             'year': year,
-#             'frequency': freq,
-#             'term_pair': f"{row['term1']} & {row['term2']}"
-#         })
-
-# decline_plot_df = pd.DataFrame(decline_plot_data)
-
-# # Create the line plot for declining trends
-# plt.figure(figsize=(12, 6))
-# sns.lineplot(data=decline_plot_df, x='year', y='frequency', hue='term_pair', marker='o')
-# plt.title('Declining Co-occurrence Trends of Technology Combinations Over Time')
-# plt.xlabel('Year')
-# plt.ylabel('Frequency')
-# plt.legend(title='Term Pairs', bbox_to_anchor=(1.05, 1), loc='upper left')
-# plt.grid()
-# plt.tight_layout()
-# plt.show()
+ 
