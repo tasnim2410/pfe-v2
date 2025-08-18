@@ -1,7 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Card } from './ui/card';
 import { ChartContainer } from './ui/chart';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  LabelList
+} from 'recharts';
 
 interface PublicationYearData {
   count: number;
@@ -17,7 +26,6 @@ const PublicationsByYear: React.FC = () => {
     const fetchData = async () => {
       try {
         const port = (await (await fetch("/backend_port.txt")).text()).trim();
-        
         const res = await fetch(`http://localhost:${port}/api/research_publications_by_year`);
         if (!res.ok) throw new Error('Failed to fetch data');
         const json = await res.json();
@@ -34,56 +42,65 @@ const PublicationsByYear: React.FC = () => {
   if (loading) return <Card><div>Loading...</div></Card>;
   if (error) return <Card><div>Error: {error}</div></Card>;
 
-  // Prepare data for chart
+  // Prepare data for the line chart
   const chartData = data.map((d) => ({ year: d.year, count: d.count }));
 
   return (
     <Card className="w-full h-full flex flex-col">
       <div className="flex-1 min-h-[400px] w-full">
+        {/* ChartContainer just provides consistent padding/theme in your UI */}
         <ChartContainer config={{}}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 32, right: 32, left: 32, bottom: 32 }}>
+            {/* Switched to LineChart to show a trend over years */}
+            <LineChart data={chartData} margin={{ top: 32, right: 32, left: 32, bottom: 32 }}>
+              {/* subtle grid for readability */}
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-              <XAxis 
-                dataKey="year" 
+              <XAxis
+                dataKey="year"
                 tick={{ fontSize: 12 }}
-                label={{ 
-                  value: 'Year', 
-                  position: 'bottom', 
+                label={{
+                  value: 'Year',
+                  position: 'bottom',
                   offset: 0,
                   style: { fontSize: 14, fontWeight: 500 }
                 }}
               />
-              <YAxis 
+              <YAxis
                 tick={{ fontSize: 12 }}
-                label={{ 
-                  value: 'Number of Publications', 
-                  angle: -90, 
+                label={{
+                  value: 'Number of Publications',
+                  angle: -90,
                   position: 'insideLeft',
                   offset: 10,
                   style: { fontSize: 14, fontWeight: 500 }
                 }}
               />
-              <Tooltip 
+              <Tooltip
                 formatter={(value) => [`${value} publications`, 'Count']}
                 labelFormatter={(year) => `Year: ${year}`}
               />
-                            <Bar 
-                dataKey="count" 
-                fill="#3692eb" 
-                radius={[4, 4, 0, 0]}
+              {/* The trend line (monotone for smooth curve). No fill so it's not an area chart. */}
+              <Line
+                type="monotone"
+                dataKey="count"
+                stroke="#3692eb"
+                strokeWidth={2}
+                dot={{ r: 3 }}          // small dots for each year
+                activeDot={{ r: 5 }}    // larger dot on hover
+                isAnimationActive={false}
               >
-                <LabelList 
-                  dataKey="count" 
-                  position="top" 
-                  formatter={(value: unknown) => 
+                {/* Labels above each point for quick reading; hidden when count=0 */}
+                <LabelList
+                  dataKey="count"
+                  position="top"
+                  formatter={(value: unknown) =>
                     typeof value === 'number' && value > 0 ? value : ''
                   }
                   fill="#333"
                   fontSize={12}
                 />
-              </Bar>
-            </BarChart>
+              </Line>
+            </LineChart>
           </ResponsiveContainer>
         </ChartContainer>
       </div>
