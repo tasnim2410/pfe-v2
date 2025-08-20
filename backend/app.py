@@ -97,8 +97,19 @@ from pptx.util import Inches
 import io
 import base64
 from ops_search import json_to_cql, fetch_to_dataframe ,extract_keyword_pairs
-from tvp_routes import tvp_bp 
+# add near your other imports in app.py
+import numpy as np
 
+from prophet_single_series import (
+    run_for_current_series,
+    fetch_current_series,
+    PUB_TAIL_TRUNC_DEFAULT,
+    PAT_TAIL_TRUNC_DEFAULT,
+    TEST_YEARS_DEFAULT,
+    HORIZON_DEFAULT,
+    MAX_LAG_DEFAULT,
+    _require_engine,      # to get a DB engine for fetch_current_series
+)
 
 import uuid
 from db import RawPatent, SearchKeyword
@@ -287,8 +298,79 @@ def create_app():
 
 
   
-  
-  
+    @app.post("/api/arimax/forecast")
+    def arimax_quadratic_forecast():
+        """
+        Shells out to the R script and returns its JSON.
+        Accepts optional body:
+        { "mode":"test","split_year":2015 }
+        { "mode":"future","horizon":5,"pub_future":{"years":[...],"values":[...]}, "pub_future_strategy":"linear" }
+        """
+        import subprocess, json, os
+        payload = request.get_json(silent=True) or {}
+
+        mode = str(payload.get("mode", "test")).lower()
+        split_year = int(payload.get("split_year", 2015))
+        horizon = int(payload.get("horizon", 5))
+        pub_future = payload.get("pub_future") or {}
+        pub_strategy = str(payload.get("pub_future_strategy", "linear")).lower()
+
+        backend_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+        r_script_path = os.getenv("ARIMAX_R_SCRIPT_PATH", os.path.join(backend_dir, "r", "arimax_quadratic.R"))
+        if not os.path.isfile(r_script_path):
+            return jsonify({"ok": False, "error": "R script not found", "path": r_script_path}), 500
+
+        fut_years_csv = fut_vals_csv = ""
+        if isinstance(pub_future, dict):
+            yrs = pub_future.get("years") or []
+            vals = pub_future.get("values") or []
+            if isinstance(yrs, list) and isinstance(vals, list) and len(yrs) == len(vals) and len(yrs) > 0:
+                fut_years_csv = ",".join(str(int(y)) for y in yrs)
+                fut_vals_csv  = ",".join(str(float(v)) for v in vals)
+
+        cmd = [
+            "Rscript", r_script_path,
+            f"--dbname={os.getenv('PG_DB', 'patent_db')}",
+            f"--host={os.getenv('PG_HOST', 'localhost')}",
+            f"--port={os.getenv('PG_PORT', '5433')}",
+            f"--user={os.getenv('PG_USER', 'postgres')}",
+            f"--password={os.getenv('PG_PASSWORD', 'tasnim')}",
+            "--sslmode=" + os.getenv("PG_SSLMODE", "prefer"),
+            f"--mode={mode}",
+            f"--split_year={split_year}",
+            f"--horizon={horizon}",
+            f"--pub_future_strategy={pub_strategy}",
+            "--debug=" + os.getenv("ARIMAX_DEBUG", "0"),
+        ]
+        if fut_years_csv and fut_vals_csv:
+            cmd += [f"--pub_future_years={fut_years_csv}", f"--pub_future_values={fut_vals_csv}"]
+
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=os.environ, check=False, timeout=180)
+        except FileNotFoundError:
+            return jsonify({"ok": False, "error": "Rscript not found in PATH"}), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({"ok": False, "error": "R script timed out"}), 504
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Unexpected error: {e}"}), 500
+
+        if proc.returncode != 0:
+            return jsonify({"ok": False, "error": "R script failed", "return_code": proc.returncode,
+                            "stderr": (proc.stderr or "").strip()}), 502
+
+        stdout = (proc.stdout or "").strip()
+        json_start = stdout.find("{"); json_end = stdout.rfind("}") + 1
+        if json_start != -1 and json_end != -1:
+            stdout = stdout[json_start:json_end]
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            return jsonify({"ok": False, "error": "Invalid JSON from R", "detail": str(e),
+                            "stdout_head": (proc.stdout or "")[:2000], "stderr": (proc.stderr or "")[:500]}), 500
+
+        return jsonify({"ok": True, "data": data, "stderr": (proc.stderr or "").strip()}), 200
+
   
   
   
@@ -3811,29 +3893,133 @@ def create_app():
             app.logger.error(f"/api/research/papers error: {e}")
             return jsonify({"error": str(e)}), 500
   
-        
-        
-    @app.route('/forecast', methods=['GET'])
-    def get_forecast():
+    def _year_to_ds(y: int) -> str:
+    # ISO-like date at year end (Prophet uses Dec-31)
+        return f"{int(y)}-12-31"
+
+    def _safe_float(x):
         try:
-            # Run the R script and capture output
-            result = subprocess.run(
-                ['Rscript', 'TVP-VAR.R'],
-                capture_output=True, text=True, check=True
+            if x is None or (isinstance(x, float) and np.isnan(x)):
+                return None
+            return float(x)
+        except Exception:
+            return None
+
+
+
+    @app.route("/api/prophet_forecast", methods=["GET", "POST"])
+    def api_prophet_forecast():
+        """
+        Returns JSON:
+        {
+        "tech": "current",
+        "best_lag": 3,
+        "xcorr": 0.287,
+        "metrics": {...},
+        "publications": {
+            "history": [{year, ds, count}],
+            "forecast": [{year, ds, yhat, yhat_lower, yhat_upper}]
+        },
+        "patents": {
+            "history": [{year, ds, count}],
+            "forecast": {
+            "with_pub_ar": [{year, ds, yhat}],
+            "baseline":    [{year, ds, yhat}]
+            }
+        }
+        }
+        """
+        try:
+            payload = request.get_json(silent=True) or {}
+            horizon    = int(payload.get("horizon",    request.args.get("horizon",    HORIZON_DEFAULT)))
+            test_years = int(payload.get("test_years", request.args.get("test_years", TEST_YEARS_DEFAULT)))
+            pub_tail   = int(payload.get("pub_tail",   request.args.get("pub_tail",   PUB_TAIL_TRUNC_DEFAULT)))
+            pat_tail   = int(payload.get("pat_tail",   request.args.get("pat_tail",   PAT_TAIL_TRUNC_DEFAULT)))
+            max_lag    = int(payload.get("max_lag",    request.args.get("max_lag",    MAX_LAG_DEFAULT)))
+            tech_label =       payload.get("tech_label", request.args.get("tech_label", "current"))
+
+            # run full pipeline (loads DATABASE_URL via python-dotenv inside the module)
+            pubs_fc, pats_fc, metrics_df, summary = run_for_current_series(
+                tech_label=tech_label,
+                pub_tail_trunc=pub_tail,
+                pat_tail_trunc=pat_tail,
+                max_lag=max_lag,
+                test_years=test_years,
+                horizon=horizon,
             )
-            # Parse JSON output from R script
-            forecast_data = json.loads(result.stdout)
-            return jsonify(forecast_data)
-        except subprocess.CalledProcessError as e:
-            return jsonify({"error": "R script failed", "details": e.stderr}), 500
-        except json.JSONDecodeError as e:
-            return jsonify({"error": "Invalid JSON from R script", "details": str(e)}), 500   
+
+            # also include history for plotting
+            engine = _require_engine()
+            pubs_hist, pats_hist = fetch_current_series(
+                engine=engine,
+                pub_tail_trunc=pub_tail,
+                pat_tail_trunc=pat_tail
+            )
+
+            pubs_history = [
+                {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "count": int(r.pub_count)}
+                for r in pubs_hist.itertuples(index=False)
+            ]
+            pats_history = [
+                {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "count": int(r.patent_count)}
+                for r in pats_hist.itertuples(index=False)
+            ]
+
+            pubs_forecast = [
+                {
+                    "year": int(r.year),
+                    "ds": _year_to_ds(int(r.year)),
+                    "yhat": _safe_float(r.pub_count_hat),
+                    "yhat_lower": _safe_float(r.yhat_lower),
+                    "yhat_upper": _safe_float(r.yhat_upper),
+                }
+                for r in pubs_fc.itertuples(index=False)
+            ]
+
+            pats_with = [
+                {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "yhat": _safe_float(r.yhat_with_pub_reg)}
+                for r in pats_fc.itertuples(index=False)
+            ]
+            pats_base = [
+                {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "yhat": _safe_float(r.yhat_baseline)}
+                for r in pats_fc.itertuples(index=False)
+            ]
+
+            md = metrics_df.iloc[0].to_dict() if len(metrics_df) else {}
+            metrics = {
+                "mae_pubs": _safe_float(md.get("mae_pubs")),
+                "rmse_pubs": _safe_float(md.get("rmse_pubs")),
+                "mae_patents_baseline": _safe_float(md.get("mae_patents_baseline")),
+                "rmse_patents_baseline": _safe_float(md.get("rmse_patents_baseline")),
+                "mae_patents_with_reg": _safe_float(md.get("mae_patents_with_reg")),
+                "rmse_patents_with_reg": _safe_float(md.get("rmse_patents_with_reg")),
+            }
+
+            resp = {
+                "tech": summary.tech,
+                "best_lag": int(summary.best_lag),
+                "xcorr": _safe_float(summary.xcorr),
+                "metrics": metrics,
+                "publications": {
+                    "history": pubs_history,
+                    "forecast": pubs_forecast,
+                },
+                "patents": {
+                    "history": pats_history,
+                    "forecast": {
+                        "with_pub_ar": pats_with,
+                        "baseline": pats_base
+                    }
+                }
+            }
+            return jsonify(resp), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
         
-        
-        
-        
-        
-        
+
+           
         
         
         
@@ -3918,7 +4104,7 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app() 
-    app.register_blueprint(tvp_bp, url_prefix="/api")
+    
 
     try:
         with app.app_context():
