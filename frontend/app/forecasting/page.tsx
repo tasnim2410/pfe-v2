@@ -14,7 +14,7 @@ const forecastData = [
 ]
 
 import PatentPublicationChart from "@/components/filing_vs_publication";
-
+import TVPTwoCharts from "@/components/TVPcharts";
 export default function Forecasting() {
   return (
     <div className="container mx-auto px-6 py-8">
@@ -92,7 +92,7 @@ export default function Forecasting() {
         </Card> */}
       </div>
       <div className="mt-8">
-        <Card>
+        <Card className="w-full">
           <CardHeader>
             <CardTitle>Patent Filings vs. Publications</CardTitle>
           </CardHeader>
@@ -100,6 +100,16 @@ export default function Forecasting() {
             <PatentPublicationChart />
           </CardContent>
         </Card>
+        <div className="mt-8">
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Forecasted Patent & Publication Trends</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <TVPTwoCharts />
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   )

@@ -182,7 +182,7 @@ const PatentPublicationChart = () => {
         const port = (await portResponse.text()).trim();
         
         // Fetch patent data
-        const patentRes = await fetch(`http://localhost:${port}/api/patents/first_filing_years`);
+        const patentRes = await  fetch(`http://localhost:${port}/api/patents/first_filing_years`);
         const patentData = await patentRes.json();
         
         // Fetch publication data

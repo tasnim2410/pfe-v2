@@ -14,9 +14,8 @@ from flask import Flask, request, jsonify
 import concurrent.futures
 from family_members import process_patent_api , PatentsSearch , process_rows
 from flask import Flask, request, jsonify
-import pandas as pd
 import logging
-import os
+
 import concurrent.futures
 import time
 from urllib.parse import quote
@@ -47,7 +46,6 @@ from flask_cors import CORS
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 from flask import jsonify
-import pandas as pd
 import math
 from collections import Counter ,defaultdict
 from keywords_coccurrence_trends import track_cooccurrence_trends , clean_text_remove_stopwords
@@ -80,7 +78,8 @@ from originality_rate import fetch_and_store_originality_data, calculate_origina
 from datetime import datetime
 import uuid
 from db import ResearchData3, ResearchWindow, ResearchTopic, ResearchDivergence  # research tables
-
+import subprocess
+import json
 import os
 import time
 import threading
@@ -98,7 +97,8 @@ from pptx.util import Inches
 import io
 import base64
 from ops_search import json_to_cql, fetch_to_dataframe ,extract_keyword_pairs
-import pandas as pd
+from tvp_routes import tvp_bp 
+
 
 import uuid
 from db import RawPatent, SearchKeyword
@@ -144,6 +144,154 @@ def create_app():
     @app.route('/')
     def home():
       return 'app is running!', 200
+  
+  
+      # -------------------- TVP endpoints (health + forecast) --------------------
+    # Small, self-contained routes to keep your existing config untouched.
+
+    @app.get("/api/tvp/health")
+    def tvp_health():
+        """
+        Simple liveness check to verify the app is wired and reachable.
+        Frontend can ping this before calling the forecast endpoint.
+        """
+        return jsonify({"ok": True, "service": "tvp", "message": "tvp service is up"}), 200
+
+    @app.post("/api/tvp/forecast")
+    def tvp_forecast():
+        """
+        Runs the R script that emits JSON for plotting.
+        Expects your R file to print compact JSON to stdout (cat(toJSON(...))).
+        Optional JSON body: { "truncate_last_n": 4, "forecast_h": 10, "lags": [1,2,3] }
+        """
+        import subprocess, json, os
+        payload = request.get_json(silent=True) or {}
+
+        # Resolve the R script path. Keep it configurable without touching other configs.
+        # Set TVP_R_SCRIPT_PATH in .env if you keep the file elsewhere.
+        backend_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+        r_script_path = os.getenv("TVP_R_SCRIPT_PATH", os.path.join(backend_dir, "r", "tvp_var_forecast.R"))
+        if not os.path.isfile(r_script_path):
+            return jsonify({"ok": False, "error": f"R script not found", "path": r_script_path}), 500
+
+        # Build command (the R script should read commandArgs and output JSON)
+        # We pass DB params via env so your R code can pick them up if needed.
+        truncate = int(payload.get("truncate_last_n", 4))
+        h        = int(payload.get("forecast_h", 10))
+        lags     = payload.get("lags", [1, 2, 3])
+        if isinstance(lags, list):
+            lags_csv = ",".join(str(int(x)) for x in lags)
+        else:
+            lags_csv = str(lags)
+
+        cmd = [
+            "Rscript",
+            r_script_path,
+            f"--dbname={os.getenv('PG_DB', 'patent_db')}",
+            f"--host={os.getenv('PG_HOST', 'localhost')}",
+            f"--port={os.getenv('PG_PORT', '5433')}",
+            f"--user={os.getenv('PG_USER', 'postgres')}",
+            f"--password={os.getenv('PG_PASSWORD', 'tasnim')}",
+            f"--truncate_last_n={truncate}",
+            f"--forecast_h={h}",
+            f"--lags={lags_csv}",
+        ]
+
+        try:
+            # Run R and capture stdout/stderr
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=os.environ,
+                check=False,
+                timeout=180
+            )
+        except FileNotFoundError:
+            return jsonify({"ok": False, "error": "Rscript binary not found in PATH"}), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({"ok": False, "error": "R script timed out"}), 504
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Unexpected error: {e}"}), 500
+
+        if proc.returncode != 0:
+            # Surface stderr to help you debug R issues quickly
+            return jsonify({
+                "ok": False,
+                "error": "R script failed",
+                "return_code": proc.returncode,
+                "stderr": proc.stderr.strip()
+            }), 502
+
+        stdout = (proc.stdout or "").strip()
+
+        # Extract JSON substring if R prints logs before JSON
+        json_start = stdout.find("{")
+        json_end   = stdout.rfind("}") + 1
+        if json_start != -1 and json_end != -1:
+            stdout = stdout[json_start:json_end]
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            return jsonify({
+                "ok": False,
+                "error": "Invalid JSON from R script",
+                "detail": str(e),
+                "stdout_head": (proc.stdout or "")[:2000]
+            }), 500
+
+        # Transform the new R script output structure for backward compatibility
+        # and enhanced functionality
+        try:
+            # Extract models and original data from new structure
+            models = data.get("models", {})
+            original_data = data.get("original_data", {})
+            
+            # Create enhanced response structure
+            enhanced_data = {
+                "models": models,
+                "original_data": original_data,
+                # Backward compatibility: use first model for legacy endpoints
+                "patents": {},
+                "publications": {}
+            }
+            
+            # For backward compatibility, use the first available model
+            if models:
+                first_model_key = list(models.keys())[0]
+                first_model = models[first_model_key]
+                
+                # Combine historical and forecast data for backward compatibility
+                if "historical" in first_model and "forecast" in first_model:
+                    hist_pat = first_model["historical"]
+                    fore_pat = first_model["forecast"]
+                    hist_pub = first_model["historical"]
+                    fore_pub = first_model["forecast"]
+                    
+                    enhanced_data["patents"] = {
+                        "years": hist_pat.get("years", []) + fore_pat.get("years", []),
+                        "values": hist_pat.get("patent_count", []) + fore_pat.get("patent_count", [])
+                    }
+                    enhanced_data["publications"] = {
+                        "years": hist_pub.get("years", []) + fore_pub.get("years", []),
+                        "values": hist_pub.get("pub_count", []) + fore_pub.get("pub_count", [])
+                    }
+            
+            return jsonify({"ok": True, "data": enhanced_data}), 200
+            
+        except Exception as transform_error:
+            # If transformation fails, return original data
+            return jsonify({"ok": True, "data": data, "transform_warning": str(transform_error)}), 200
+
+
+
+  
+  
+  
+  
+  
+  
   
   
 
@@ -3665,7 +3813,21 @@ def create_app():
   
         
         
-        
+    @app.route('/forecast', methods=['GET'])
+    def get_forecast():
+        try:
+            # Run the R script and capture output
+            result = subprocess.run(
+                ['Rscript', 'TVP-VAR.R'],
+                capture_output=True, text=True, check=True
+            )
+            # Parse JSON output from R script
+            forecast_data = json.loads(result.stdout)
+            return jsonify(forecast_data)
+        except subprocess.CalledProcessError as e:
+            return jsonify({"error": "R script failed", "details": e.stderr}), 500
+        except json.JSONDecodeError as e:
+            return jsonify({"error": "Invalid JSON from R script", "details": str(e)}), 500   
         
         
         
@@ -3756,6 +3918,8 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app() 
+    app.register_blueprint(tvp_bp, url_prefix="/api")
+
     try:
         with app.app_context():
             db.engine.connect()
