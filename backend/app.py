@@ -108,7 +108,8 @@ from prophet_single_series import (
     TEST_YEARS_DEFAULT,
     HORIZON_DEFAULT,
     MAX_LAG_DEFAULT,
-    _require_engine,      # to get a DB engine for fetch_current_series
+    _require_engine,  
+    validate_horizon # to get a DB engine for fetch_current_series
 )
 
 import uuid
@@ -3931,7 +3932,9 @@ def create_app():
         """
         try:
             payload = request.get_json(silent=True) or {}
-            horizon    = int(payload.get("horizon",    request.args.get("horizon",    HORIZON_DEFAULT)))
+                # Get and validate horizon parameter
+            horizon = int(payload.get("horizon", HORIZON_DEFAULT))
+            horizon = validate_horizon(horizon)
             test_years = int(payload.get("test_years", request.args.get("test_years", TEST_YEARS_DEFAULT)))
             pub_tail   = int(payload.get("pub_tail",   request.args.get("pub_tail",   PUB_TAIL_TRUNC_DEFAULT)))
             pat_tail   = int(payload.get("pat_tail",   request.args.get("pat_tail",   PAT_TAIL_TRUNC_DEFAULT)))

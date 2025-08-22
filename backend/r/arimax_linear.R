@@ -1,12 +1,12 @@
 #!/usr/bin/env Rscript
-# arimax_quadratic.R
-# ARIMAX with quadratic exog: [pub_{t-1}, (pub_{t-1})^2]
+# arimax_linear.R
+# ARIMAX with linear exog: pub_{t-1}
 # Truncation: patents -> drop last 3 years; publications -> drop last 1 year
 # Modes:
 #   - test   : train on all but last 5 years, test on last 5 years, report MAE/RMSE
 #   - future : train all (after truncation), forecast H with future pub path
 #
-# Output: compact JSON on stdout. Any diagnostics go to stderr via message().
+# Output: compact JSON on stdout. Diagnostics go to stderr via message().
 # Deps: DBI, RPostgres, dplyr, forecast, jsonlite
 
 suppressPackageStartupMessages({
@@ -51,6 +51,7 @@ pub_future_values <- get_cfg("--pub_future_values", "PUB_FUTURE_VALUES","")
 pub_strategy      <- tolower(get_cfg("--pub_future_strategy","PUB_FUTURE_STRATEGY","linear")) # linear|flat
 DEBUG <- as.integer(get_cfg("--debug", "DEBUG", "0"))
 
+
 # ---------- small utils ----------
 safe_int <- function(x) suppressWarnings(as.integer(x))
 safe_num <- function(x) suppressWarnings(as.numeric(x))
@@ -69,11 +70,11 @@ linear_extrapolate <- function(years, vals, h) {
 if (DEBUG == 1) {
   pw_set <- ifelse(nzchar(db_pass), "YES", "NO")
   message(sprintf(
-    "[ARIMAX] DB: dbname=%s host=%s port=%d user=%s password_set=%s sslmode=%s",
+    "[ARIMAX-linear] DB: dbname=%s host=%s port=%d user=%s password_set=%s sslmode=%s",
     db_name, db_host, db_port, db_user, pw_set, sslmode
   ))
-  message(sprintf("[ARIMAX] Tables: patents=%s, pubs=%s", pat_table, pub_table))
-  message(sprintf("[ARIMAX] Mode=%s split_year=%d horizon=%d strategy=%s", mode, split_year, horizon, pub_strategy))
+  message(sprintf("[ARIMAX-linear] Tables: patents=%s, pubs=%s", pat_table, pub_table))
+  message(sprintf("[ARIMAX-linear] Mode=%s split_year=%d horizon=%d strategy=%s", mode, split_year, horizon, pub_strategy))
 }
 
 # ---------- connect ----------
@@ -86,12 +87,43 @@ con <- tryCatch(
   ),
   error = function(e) {
     msg <- paste("DB connection failed:", conditionMessage(e))
-    if (DEBUG == 1) message("[ARIMAX] ", msg)
+    if (DEBUG == 1) message("[ARIMAX-linear] ", msg)
     cat(toJSON(list(ok = FALSE, stage = "connect", error = msg), auto_unbox = TRUE))
     quit(save = "no", status = 0)
   }
 )
 on.exit(try(dbDisconnect(con), silent = TRUE))
+
+
+# --- add this helper near the top (after library calls) ---
+parse_database_url <- function(url) {
+  m <- regexec("^postgres(?:ql)?(?:\\+[^:]*)?://([^:]+):([^@]+)@([^:/]+):?(\\d+)?/([^/?#]+)", url)
+  parts <- regmatches(url, m)[[1]]
+  if (length(parts) == 6) {
+    list(
+      user = parts[2],
+      password = parts[3],
+      host = parts[4],
+      port = ifelse(is.na(parts[5]) || parts[5] == "", "5432", parts[5]),
+      dbname = parts[6]
+    )
+  } else {
+    stop("Could not parse DATABASE_URL")
+  }
+}
+
+# --- drop this right after your existing config vars ---
+db_url <- Sys.getenv("DATABASE_URL", "")
+if (nzchar(db_url)) {
+  p <- parse_database_url(db_url)
+  db_user <- p$user
+  db_pass <- p$password
+  db_host <- p$host
+  db_port <- as.integer(p$port)
+  db_name <- p$dbname
+}
+
+
 
 # ---------- queries (parametrized table names) ----------
 q_pat <- sprintf("
@@ -111,20 +143,20 @@ q_pub <- sprintf("
 pat_df <- tryCatch(dbGetQuery(con, q_pat),
   error = function(e) {
     msg <- paste("Query patents failed:", conditionMessage(e))
-    if (DEBUG == 1) message("[ARIMAX] ", msg)
+    if (DEBUG == 1) message("[ARIMAX-linear] ", msg)
     cat(toJSON(list(ok = FALSE, stage = "query_patents", error = msg), auto_unbox = TRUE))
     quit(save = "no", status = 0)
-  })
+})
 pub_df <- tryCatch(dbGetQuery(con, q_pub),
   error = function(e) {
     msg <- paste("Query publications failed:", conditionMessage(e))
-    if (DEBUG == 1) message("[ARIMAX] ", msg)
+    if (DEBUG == 1) message("[ARIMAX-linear] ", msg)
     cat(toJSON(list(ok = FALSE, stage = "query_publications", error = msg), auto_unbox = TRUE))
     quit(save = "no", status = 0)
-  })
+})
 
 if (DEBUG == 1) {
-  message(sprintf("[ARIMAX] Rows: patents=%d, pubs=%d", nrow(pat_df), nrow(pub_df)))
+  message(sprintf("[ARIMAX-linear] Rows: patents=%d, pubs=%d", nrow(pat_df), nrow(pub_df)))
 }
 
 if (nrow(pat_df) == 0L) {
@@ -158,11 +190,10 @@ df <- data.frame(year = years_all) %>%
   ) %>%
   dplyr::arrange(year)
 
-# lag + quadratic exog
+# linear exog: pub_lag1
 df <- df %>%
   dplyr::mutate(pub_lag1 = dplyr::lag(pub_count, 1)) %>%
-  dplyr::filter(!is.na(pub_lag1)) %>%
-  dplyr::mutate(pub_lag1_sq = pub_lag1^2)
+  dplyr::filter(!is.na(pub_lag1))
 
 if (nrow(df) < 6) {
   cat(toJSON(list(ok = FALSE, stage = "features", error = "Too few rows after lag alignment."), auto_unbox = TRUE))
@@ -170,7 +201,7 @@ if (nrow(df) < 6) {
 }
 
 y_all   <- df$patent_count
-x_train <- cbind(pub_lag1 = df$pub_lag1, pub_lag1_sq = df$pub_lag1_sq)
+x_train <- as.matrix(df$pub_lag1)
 yrs     <- df$year
 
 res <- list(ok = TRUE)
@@ -182,7 +213,7 @@ res$original_data <- list(
 )
 
 if (mode == "test") {
-  # ---- use the last 5 years for testing ----
+  # ---- last 5 years as test ----
   k_test <- 5L
   n <- length(yrs)
   if (n <= k_test) {
@@ -206,7 +237,7 @@ if (mode == "test") {
   lo95 <- as.numeric(fc$lower[, 2])
   hi95 <- as.numeric(fc$upper[, 2])
 
-  res$model   <- "arimax-quadratic"
+  res$model   <- "arimax-linear"
   res$order   <- as.integer(mod$arma[c(1,6,2)])  # p,d,q
   res$train   <- list(years = as.integer(yrs_tr), fitted = fitted_in)
   res$test    <- list(years = as.integer(yrs_te), yhat = yhat, yhat_lower = lo95, yhat_upper = hi95)
@@ -218,6 +249,7 @@ if (mode == "test") {
     quit(save = "no", status = 0)
   }
 
+  # future pubs: explicit or scenario
   fut_years <- trimws(unlist(strsplit(pub_future_years, ",")))
   fut_vals  <- trimws(unlist(strsplit(pub_future_values, ",")))
   fut_years <- fut_years[nzchar(fut_years)]
@@ -236,23 +268,24 @@ if (mode == "test") {
     }
   }
 
+  # fit model on all available (after truncation)
   mod <- forecast::auto.arima(
     y_all, xreg = x_train,
     stepwise = FALSE, approximation = FALSE
   )
 
+  # build future lag-1 path (pub_{t-1})
   last_hist_pub <- tail(df$pub_count, 1)
   lag1 <- numeric(horizon); prev <- as.numeric(last_hist_pub)
   for (i in seq_len(horizon)) { lag1[i] <- prev; prev <- fut_pubs[i] }
-  lag1_sq <- lag1^2
-  X_future <- cbind(pub_lag1 = lag1, pub_lag1_sq = lag1_sq)
+  X_future <- as.matrix(lag1)
 
   fc <- forecast::forecast(mod, xreg = X_future, h = horizon)
   yhat <- as.numeric(fc$mean)
   lo95 <- as.numeric(fc$lower[, 2])
   hi95 <- as.numeric(fc$upper[, 2])
 
-  res$model    <- "arimax-quadratic"
+  res$model    <- "arimax-linear"
   res$order    <- as.integer(mod$arma[c(1,6,2)])  # p,d,q
   res$forecast <- list(
     years = as.integer(fut_years),

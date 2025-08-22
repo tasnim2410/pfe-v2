@@ -41,6 +41,7 @@ except Exception:
     from fbprophet import Prophet  # type: ignore
 
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+import matplotlib.pyplot as plt
 
 # ----------------------------
 # Config defaults
@@ -49,7 +50,9 @@ PUB_TAIL_TRUNC_DEFAULT = 1   # drop last 1 y of publications (incomplete year)
 PAT_TAIL_TRUNC_DEFAULT = 3   # drop last 3 y of patents (filing delays)
 MAX_LAG_DEFAULT = 5          # search lags 0..5 for pubs->patents
 TEST_YEARS_DEFAULT = 5       # holdout length for evaluation
-HORIZON_DEFAULT = 10         # forecast years ahead
+HORIZON_MIN = 3              # Minimum forecast years
+HORIZON_MAX = 20             # Maximum forecast years
+HORIZON_DEFAULT = 5         # forecast years ahead
 TECH_LABEL_DEFAULT = "current"  # label for outputs when single series
 AR_LAGS = (1, 2)             # patent AR terms to include as regressors
 
@@ -335,6 +338,7 @@ def prophet_patents_with_pub_and_ar_predict(
     for k in lags:
         m.add_regressor(f"pat_lag{k}")
     m.fit(train[["ds", "y", "pub_reg"] + [f"pat_lag{k}" for k in lags]])
+    print(train.shape)  # after `dropna` on lagged regressors
 
     # Iterative future predictions
     preds = _iterative_prophet_predict_with_regressors(
@@ -361,6 +365,15 @@ class EvalResults:
     mae_pat_with_reg: float
     rmse_pat_with_reg: float
 
+def validate_horizon(horizon: int) -> int:
+    """Validate and constrain forecast horizon."""
+    if not isinstance(horizon, int):
+        try:
+            horizon = int(horizon)
+        except (TypeError, ValueError):
+            return HORIZON_DEFAULT
+    return max(HORIZON_MIN, min(horizon, HORIZON_MAX))
+
 def run_for_current_series(
     engine=None,
     tech_label: str = TECH_LABEL_DEFAULT,
@@ -369,16 +382,14 @@ def run_for_current_series(
     max_lag: int = MAX_LAG_DEFAULT,
     test_years: int = TEST_YEARS_DEFAULT,
     horizon: int = HORIZON_DEFAULT,
-    pubs_error_threshold_rmse: Optional[float] = None,  # if set, can switch to scenario
+    pubs_error_threshold_rmse: Optional[float] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, EvalResults]:
     """
-    Full pipeline on the current DB contents:
-      - fetch series
-      - infer lag (train-only)
-      - eval (last test_years)
-      - final forecasts for horizon years
-    Returns: publications_forecast_df, patents_forecast_df, metrics_df, eval_summary
+    Full pipeline on the current DB contents with validated horizon parameter.
     """
+    # Validate horizon parameter
+    horizon = validate_horizon(horizon)
+    
     engine = engine or _require_engine()
     pubs, pats = fetch_current_series(engine, pub_tail_trunc, pat_tail_trunc)
 
@@ -460,6 +471,7 @@ def run_for_current_series(
 
     # Also baseline (optional, for comparison)
     pat_base_future = prophet_patents_baseline_predict(pats, predict_years=future_years)
+    
 
     # Assemble outputs
     pubs_forecasts = pub_fc_full.copy()
@@ -483,6 +495,8 @@ def run_for_current_series(
         "mae_patents_baseline": mae_base,
         "rmse_patents_baseline": rmse_base
     }])
+    
+    pub_reg_test_full.plot(x="year", y="pub_reg")
 
     return pubs_forecasts, patents_forecasts, metrics_df, eval_summary
 
@@ -495,9 +509,17 @@ def _fmt2(x):
 if __name__ == "__main__":
     pubs_fc, pats_fc, metrics_df, summary = run_for_current_series()
 
-    pubs_fc.to_csv("publications_forecasts.csv", index=False)
-    pats_fc.to_csv("patents_forecasts_with_pub_reg.csv", index=False)
-    metrics_df.to_csv("prophet_eval_metrics.csv", index=False)
+    # pubs_fc.to_csv("publications_forecasts.csv", index=False)
+    # pats_fc.to_csv("patents_forecasts_with_pub_reg.csv", index=False)
+    # metrics_df.to_csv("prophet_eval_metrics.csv", index=False)
+    
+    print("publications forecsts :")
+    print( pubs_fc)
+    print('patents forecsts : ')
+    print(pats_fc)
+    print('metrics_df : ')
+    print(metrics_df)
+    
 
     print("\n=== Evaluation (last test years) ===")
     print(f"tech: {summary.tech}")
@@ -510,7 +532,3 @@ if __name__ == "__main__":
     print(f"Patents base  MAE={_fmt2(summary.mae_pat_no_reg)}  RMSE={_fmt2(summary.rmse_pat_no_reg)}")
     print(f"Patents reg   MAE={_fmt2(summary.mae_pat_with_reg)}  RMSE={_fmt2(summary.rmse_pat_with_reg)}")
 
-    print("\nArtifacts written:")
-    print("  - publications_forecasts.csv")
-    print("  - patents_forecasts_with_pub_reg.csv")
-    print("  - prophet_eval_metrics.csv")

@@ -1,3 +1,5 @@
+import fs from 'fs'
+import path from 'path'
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: {
@@ -18,6 +20,27 @@ const nextConfig = {
       }
     }
     return config
+  },
+  async rewrites() {
+    // Prefer env var, else read from public/backend_port.txt
+    let port = process.env.BACKEND_PORT
+    if (!port) {
+      try {
+        const p = path.join(process.cwd(), 'public', 'backend_port.txt')
+        port = fs.readFileSync(p, 'utf8').trim()
+      } catch {
+        // no-op; no rewrite if port unavailable
+      }
+    }
+
+    if (!port) return []
+
+    return [
+      {
+        source: '/api/:path*',
+        destination: `http://localhost:${port}/api/:path*`,
+      },
+    ]
   },
 }
 

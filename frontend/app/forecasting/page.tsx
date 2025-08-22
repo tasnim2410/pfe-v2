@@ -15,6 +15,8 @@ const forecastData = [
 
 import PatentPublicationChart from "@/components/filing_vs_publication";
 import TVPTwoCharts from "@/components/TVPcharts";
+import ProphetForecast from "@/components/prophet_forecast";
+import ArimaxQuadraticClient from "@/components/arimax_quadratic_client";
 export default function Forecasting() {
   return (
     <div className="container mx-auto px-6 py-8">
@@ -24,72 +26,15 @@ export default function Forecasting() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* <Card>
+        <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Patent Trend Forecast</CardTitle>
+            <CardTitle>ARIMAX Quadratic Model Forecast</CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={400}>
-              <LineChart data={forecastData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="year" />
-                <YAxis />
-                <Tooltip />
-                <Line
-                  type="monotone"
-                  dataKey="patents"
-                  stroke="#8884d8"
-                  strokeWidth={2}
-                    
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <ArimaxQuadraticClient />
           </CardContent>
         </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Research Publication Forecast</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={400}>
-              <AreaChart data={forecastData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="year" />
-                <YAxis />
-                <Tooltip />
-                <Area type="monotone" dataKey="research" stroke="#82ca9d" fill="#82ca9d" fillOpacity={0.6} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card> */}
-
-        {/* <Card className="lg:col-span-2">
-          <CardHeader>  
-            <CardTitle>Combined Forecast Analysis</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={400}>
-              <LineChart data={forecastData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="year" />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="patents" stroke="#8884d8" strokeWidth={2} name="Patents" />
-                <Line type="monotone" dataKey="research" stroke="#82ca9d" strokeWidth={2} name="Research" />
-              </LineChart>
-            </ResponsiveContainer>
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-              <h3 className="font-semibold text-blue-900 mb-2">Forecast Insights</h3>
-              <ul className="text-sm text-blue-800 space-y-1">
-                <li>• Patent applications expected to grow by 75% over the next 3 years</li>
-                <li>• Research publications showing steady 15% annual growth</li>
-                <li>• Strong correlation between research output and patent filings</li>
-                <li>• Peak innovation period predicted for 2025-2026</li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card> */}
+        
       </div>
       <div className="mt-8">
         <Card className="w-full">
@@ -107,6 +52,16 @@ export default function Forecasting() {
             </CardHeader>
             <CardContent>
               <TVPTwoCharts />
+              <div className="mt-8">
+                <Card className="w-full">
+                  <CardHeader>
+                    <CardTitle>Prophet Model Forecast</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ProphetForecast  />
+                  </CardContent>
+                </Card>
+              </div>
             </CardContent>
           </Card>
         </div>
