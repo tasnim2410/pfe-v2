@@ -1,0 +1,8 @@
+pat7; Artificial Intelligence
+pat8; Cybersecurity
+pat9; Internet Protocol Television
+pat10; Mobile Computing
+pub7; Artificial Intelligence
+pub8; Cybersecurity
+pub9; Internet Protocol Television
+pub10; Mobile Computing

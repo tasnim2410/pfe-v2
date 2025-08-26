@@ -1,0 +1,8 @@
+pat3; Health Information Systems
+pat4; 3D Printing
+pat5; Smart Grid Technology
+pat6; Data Warehousing
+pub3; Health Information Systems
+pub4; 3D Printing
+pub5; Smart Grid Technology
+pub6; Data Warehousing

@@ -1,0 +1,8 @@
+pat15; Edge Computing
+pat16; Supply Chain
+pat17; Online Learning
+pat18; Optical Character Recognition
+pub15; Edge Computing
+pub16; Supply Chain
+pub17; Online Learning
+pub; Optical Character Recognition

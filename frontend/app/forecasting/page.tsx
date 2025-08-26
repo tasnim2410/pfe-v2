@@ -58,7 +58,7 @@ export default function Forecasting() {
                     <CardTitle>Prophet Model Forecast</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ProphetForecast  />
+                    <ProphetForecast/>
                   </CardContent>
                 </Card>
               </div>

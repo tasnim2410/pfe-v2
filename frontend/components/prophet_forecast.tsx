@@ -36,6 +36,9 @@ type ProphetResponse = {
     rmse_patents_with_reg: number;
     mae_pubs: number;
     rmse_pubs: number;
+    ampe_patents_baseline: number;
+    ampe_patents_with_reg: number;
+    ampe_pubs: number;
   };
   patents: {
     history: HistoryPoint[];
@@ -94,7 +97,8 @@ export default function ProphetForecast() {
         body: JSON.stringify({ 
           horizon: horizonValue, 
           pub_tail: pubTailValue, 
-          pat_tail: patTailValue 
+          pat_tail: patTailValue,
+          test_years: patTailValue
         }),
       });
       if (!res.ok) {
@@ -263,7 +267,7 @@ export default function ProphetForecast() {
   return (
     <Card className="w-full">
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <CardTitle>Prophet Forecast</CardTitle>
+        {/* <CardTitle>Prophet Forecast</CardTitle> */}
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <Label htmlFor="horizon" className="text-sm whitespace-nowrap">
@@ -455,35 +459,74 @@ export default function ProphetForecast() {
                 </ResponsiveContainer>
               </div>
             )}
-            <div className="mt-2 text-sm text-gray-800 grid sm:grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <div className="font-semibold">Patents (MAE / RMSE)</div>
-                <div>
-                  Baseline:&nbsp;
-                  <span className="tabular-nums">
-                    {data.metrics.mae_patents_baseline.toFixed(2)} /{" "}
-                    {data.metrics.rmse_patents_baseline.toFixed(2)}
-                  </span>
+            <div className="mt-2 text-sm text-gray-800 grid sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="font-semibold">Patents Metrics</div>
+                <div className="space-y-1">
+                  <div>
+                    <span className="font-medium">Baseline:</span>
+                  </div>
+                  <div className="pl-2 space-y-0.5">
+                    <div>
+                      MAE / RMSE:&nbsp;
+                      <span className="tabular-nums">
+                        {data.metrics.mae_patents_baseline.toFixed(2)} /{" "}
+                        {data.metrics.rmse_patents_baseline.toFixed(2)}
+                      </span>
+                    </div>
+                    <div>
+                      AMPE:&nbsp;
+                      <span className="tabular-nums">
+                        {data.metrics.ampe_patents_baseline.toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  With pubs AR:&nbsp;
-                  <span className="tabular-nums">
-                    {data.metrics.mae_patents_with_reg.toFixed(2)} /{" "}
-                    {data.metrics.rmse_patents_with_reg.toFixed(2)}
-                  </span>
+                <div className="space-y-1">
+                  <div>
+                    <span className="font-medium">With pubs AR:</span>
+                  </div>
+                  <div className="pl-2 space-y-0.5">
+                    <div>
+                      MAE / RMSE:&nbsp;
+                      <span className="tabular-nums">
+                        {data.metrics.mae_patents_with_reg.toFixed(2)} /{" "}
+                        {data.metrics.rmse_patents_with_reg.toFixed(2)}
+                      </span>
+                    </div>
+                    <div>
+                      AMPE:&nbsp;
+                      <span className="tabular-nums">
+                        {data.metrics.ampe_patents_with_reg.toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-1">
-                <div className="font-semibold">Publications (MAE / RMSE)</div>
-                <div className="tabular-nums">
-                  {data.metrics.mae_pubs.toFixed(2)} / {data.metrics.rmse_pubs.toFixed(2)}
+              <div className="space-y-2">
+                <div className="font-semibold">Publications Metrics</div>
+                <div className="space-y-0.5">
+                  <div>
+                    MAE / RMSE:&nbsp;
+                    <span className="tabular-nums">
+                      {data.metrics.mae_pubs.toFixed(2)} / {data.metrics.rmse_pubs.toFixed(2)}
+                    </span>
+                  </div>
+                  <div>
+                    AMPE:&nbsp;
+                    <span className="tabular-nums">
+                      {data.metrics.ampe_pubs.toFixed(2)}%
+                    </span>
+                  </div>
                 </div>
                 {typeof data.xcorr === "number" && (
-                  <div>
-                    Corr(pubs→patents): <span className="tabular-nums">{data.xcorr.toFixed(3)}</span>
-                    {typeof data.best_lag === "number" && (
-                      <> &nbsp;• Best lag: <span className="tabular-nums">{data.best_lag}</span> years</>
-                    )}
+                  <div className="mt-2 pt-2 border-t border-gray-200">
+                    <div>
+                      Corr(pubs→patents): <span className="tabular-nums">{data.xcorr.toFixed(3)}</span>
+                      {typeof data.best_lag === "number" && (
+                        <> &nbsp;• Best lag: <span className="tabular-nums">{data.best_lag}</span> years</>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

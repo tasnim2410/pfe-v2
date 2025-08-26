@@ -111,6 +111,7 @@ from prophet_single_series import (
     _require_engine,  
     validate_horizon # to get a DB engine for fetch_current_series
 )
+#from lstm import _y_inv, create_sequences_for_tech, fit_scaler_guarded, build_tech_dataframe, N_STEPS
 
 import uuid
 from db import RawPatent, SearchKeyword
@@ -3919,10 +3920,12 @@ def create_app():
         "metrics": {...},
         "publications": {
             "history": [{year, ds, count}],
+            "test":     [{year, ds, actual, yhat, yhat_lower, yhat_upper}],
             "forecast": [{year, ds, yhat, yhat_lower, yhat_upper}]
         },
         "patents": {
             "history": [{year, ds, count}],
+            "test":     [{year, ds, actual, yhat_baseline, yhat_with_pub_reg}],
             "forecast": {
             "with_pub_ar": [{year, ds, yhat}],
             "baseline":    [{year, ds, yhat}]
@@ -3932,23 +3935,36 @@ def create_app():
         """
         try:
             payload = request.get_json(silent=True) or {}
-                # Get and validate horizon parameter
-            horizon = int(payload.get("horizon", HORIZON_DEFAULT))
-            horizon = validate_horizon(horizon)
+
+            # Get and validate horizon parameter
+            horizon    = int(payload.get("horizon", HORIZON_DEFAULT))
+            horizon    = validate_horizon(horizon)
             test_years = int(payload.get("test_years", request.args.get("test_years", TEST_YEARS_DEFAULT)))
             pub_tail   = int(payload.get("pub_tail",   request.args.get("pub_tail",   PUB_TAIL_TRUNC_DEFAULT)))
             pat_tail   = int(payload.get("pat_tail",   request.args.get("pat_tail",   PAT_TAIL_TRUNC_DEFAULT)))
             max_lag    = int(payload.get("max_lag",    request.args.get("max_lag",    MAX_LAG_DEFAULT)))
             tech_label =       payload.get("tech_label", request.args.get("tech_label", "current"))
 
-            # run full pipeline (loads DATABASE_URL via python-dotenv inside the module)
-            pubs_fc, pats_fc, metrics_df, summary = run_for_current_series(
+            # NEW: explicit split controls
+            split_year      = payload.get("split_year",      request.args.get("split_year"))
+            eval_start_year = payload.get("eval_start_year", request.args.get("eval_start_year"))
+            eval_end_year   = payload.get("eval_end_year",   request.args.get("eval_end_year"))
+
+            split_year      = int(split_year)      if split_year is not None else None
+            eval_start_year = int(eval_start_year) if eval_start_year is not None else None
+            eval_end_year   = int(eval_end_year)   if eval_end_year is not None else None
+
+            # Run full pipeline (DB URL via dotenv inside the module)
+            pubs_fc, pats_fc, metrics_df, summary, pubs_test_eval, pats_test_eval = run_for_current_series(
                 tech_label=tech_label,
                 pub_tail_trunc=pub_tail,
                 pat_tail_trunc=pat_tail,
                 max_lag=max_lag,
                 test_years=test_years,
                 horizon=horizon,
+                split_year=split_year,
+                eval_start_year=eval_start_year,
+                eval_end_year=eval_end_year,
             )
 
             # also include history for plotting
@@ -3968,15 +3984,38 @@ def create_app():
                 for r in pats_hist.itertuples(index=False)
             ]
 
+            pubs_test_points = [
+                {
+                "year": int(r.year),
+                "ds": _year_to_ds(int(r.year)),
+                "actual": _safe_float(r.actual),
+                "yhat": _safe_float(r.yhat),
+                "yhat_lower": _safe_float(r.yhat_lower),
+                "yhat_upper": _safe_float(r.yhat_upper),
+                }
+                for r in pubs_test_eval.itertuples(index=False)
+            ]
+
             pubs_forecast = [
                 {
-                    "year": int(r.year),
-                    "ds": _year_to_ds(int(r.year)),
-                    "yhat": _safe_float(r.pub_count_hat),
-                    "yhat_lower": _safe_float(r.yhat_lower),
-                    "yhat_upper": _safe_float(r.yhat_upper),
+                "year": int(r.year),
+                "ds": _year_to_ds(int(r.year)),
+                "yhat": _safe_float(r.pub_count_hat),
+                "yhat_lower": _safe_float(r.yhat_lower),
+                "yhat_upper": _safe_float(r.yhat_upper),
                 }
                 for r in pubs_fc.itertuples(index=False)
+            ]
+
+            pats_test_points = [
+                {
+                "year": int(r.year),
+                "ds": _year_to_ds(int(r.year)),
+                "actual": _safe_float(r.actual),
+                "yhat_baseline": _safe_float(r.yhat_baseline),
+                "yhat_with_pub_reg": _safe_float(r.yhat_with_pub_reg),
+                }
+                for r in pats_test_eval.itertuples(index=False)
             ]
 
             pats_with = [
@@ -3992,10 +4031,13 @@ def create_app():
             metrics = {
                 "mae_pubs": _safe_float(md.get("mae_pubs")),
                 "rmse_pubs": _safe_float(md.get("rmse_pubs")),
+                "ampe_pubs": _safe_float(md.get("ampe_pubs")),
                 "mae_patents_baseline": _safe_float(md.get("mae_patents_baseline")),
                 "rmse_patents_baseline": _safe_float(md.get("rmse_patents_baseline")),
+                "ampe_patents_baseline": _safe_float(md.get("ampe_patents_baseline")),
                 "mae_patents_with_reg": _safe_float(md.get("mae_patents_with_reg")),
                 "rmse_patents_with_reg": _safe_float(md.get("rmse_patents_with_reg")),
+                "ampe_patents_with_reg": _safe_float(md.get("ampe_patents_with_reg")),
             }
 
             resp = {
@@ -4005,10 +4047,12 @@ def create_app():
                 "metrics": metrics,
                 "publications": {
                     "history": pubs_history,
+                    "test": pubs_test_points,
                     "forecast": pubs_forecast,
                 },
                 "patents": {
                     "history": pats_history,
+                    "test": pats_test_points,
                     "forecast": {
                         "with_pub_ar": pats_with,
                         "baseline": pats_base
@@ -4019,7 +4063,209 @@ def create_app():
 
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+
     
+    # @app.route("/api/lstm_forecast", methods=["GET", "POST"])
+    # def lstm_forecast_single_series():
+    #     """
+    #     Forecast future patent counts using your trained LSTM model.
+    #     - History is built from your real DB:
+    #       • Patents per year from raw_patents (grouped by first_filing_year)
+    #       • Publications per year from research_data3 (grouped by year)
+    #     - Uses the same scaler + inverse transforms as your LSTM utilities.
+    #     Request body (optional):
+    #       { "horizon": <int, default 5> }
+    #     Response:
+    #       {
+    #         "ok": true,
+    #         "history": {"years": [...], "patents": [...]},
+    #         "forecast": {"years": [...], "patents": [...]}
+    #       }
+    #     """
+    #     try:
+    #         # 1) Read optional horizon from JSON
+    #         payload = request.get_json(silent=True) or {}
+    #         horizon = int(payload.get("horizon", 5))
+
+    #         # 2) Load yearly data directly from your DB using your existing queries
+    #         #    (These are the exact queries you already use in your endpoints.)
+    #         patents_q = text("""
+    #             SELECT first_filing_year AS year, COUNT(*) AS count
+    #             FROM raw_patents
+    #             WHERE first_filing_year IS NOT NULL
+    #             GROUP BY first_filing_year
+    #             ORDER BY year
+    #         """)
+
+    #         publications_q = text("""
+    #             SELECT year, COUNT(*) AS count
+    #             FROM research_data3
+    #             WHERE year IS NOT NULL
+    #             GROUP BY year
+    #             ORDER BY year
+    #         """)
+
+    #         with engine.connect() as conn:
+    #             pat_rows = conn.execute(patents_q).fetchall()
+    #             pub_rows = conn.execute(publications_q).fetchall()
+
+    #         if not pat_rows:
+    #             return jsonify({"ok": False, "error": "No patent data available (raw_patents)."}), 400
+    #         if not pub_rows:
+    #             return jsonify({"ok": False, "error": "No publication data available (research_data3)."}), 400
+
+    #         # 3) Convert to DataFrames
+    #         pat_df = pd.DataFrame(pat_rows, columns=["year", "patent_count"])
+    #         pub_df = pd.DataFrame(pub_rows, columns=["year", "publication_count"])
+
+    #         # 4) Align by year: left join on patent years (or inner join if you prefer strict overlap)
+    #         #    We'll use an inner join so the LSTM sees aligned years with both features.
+    #         merged = pd.merge(pat_df, pub_df, on="year", how="inner")
+
+    #         # 5) Rename to the columns your build_tech_dataframe/create_sequences expect
+    #         #    build_tech_dataframe(pat_df, pub_df, tech) in your old code worked per-technology;
+    #         #    here we’re providing a single-technology frame with 'year', 'patents', 'publications'.
+    #         df = merged.rename(columns={"patent_count": "patents", "publication_count": "publications"}).sort_values("year")
+
+    #         # Basic data sufficiency check for the sequence length
+    #         if df.shape[0] < N_STEPS + 1:
+    #             return jsonify({"ok": False, "error": f"Not enough aligned yearly rows for forecasting (need > {N_STEPS})."}), 400
+
+    #         # 6) Prepare sequences for the model
+    #         #    We wrap into the API you already use so scaling & sequence shapes match the trained model.
+    #         #    Internally, your utilities expect columns ['year', 'patents', 'publications'].
+    #         #    If build_tech_dataframe is strictly required, we mimic its output here:
+    #         df_for_sequences = df[["year", "patents", "publications"]].copy()
+
+    #         # create full sequence matrices
+    #         X_all, y_all, _, _ = create_sequences_for_tech(df_for_sequences)
+
+    #         # most recent rolling window
+    #         recent_window = df_for_sequences[["patents", "publications"]].values[-N_STEPS:]
+
+    #         # 7) Fit scalers
+    #         x_scaler = fit_scaler_guarded(X_all.reshape(-1, 2))
+    #         y_scaler = fit_scaler_guarded(y_all.reshape(-1, 1))
+
+    #         # 8) Load your trained model (only on demand in this route)
+    #         model_path = os.path.join("backend", "outputs", "lstm_patent_forecaster.keras")
+    #         model = tf.keras.models.load_model(model_path)
+
+    #         # 9) Roll out forecasts autoregressively on the 'patents' target
+    #         current_input = recent_window.copy()
+    #         preds = []
+    #         for _ in range(horizon):
+    #             scaled_in = x_scaler.transform(current_input).reshape(1, N_STEPS, 2)
+    #             pred_scaled = model.predict(scaled_in, verbose=0)
+    #             pred_unscaled = y_scaler.inverse_transform(pred_scaled).flatten()[0]
+    #             # apply your original inverse-mapping for y (if any)
+    #             pred = _y_inv(pred_unscaled)
+    #             preds.append(pred)
+    #             # shift window: new row = [predicted_patents, keep last observed publications feature]
+    #             current_input = np.vstack([current_input[1:], [pred, current_input[-1][1]]])
+
+    #         last_year = int(df_for_sequences["year"].iloc[-1])
+    #         forecast_years = list(range(last_year + 1, last_year + 1 + horizon))
+
+    #         return jsonify({
+    #             "ok": True,
+    #             "history": {
+    #                 "years": df_for_sequences["year"].astype(int).tolist(),
+    #                 "patents": df_for_sequences["patents"].astype(float).tolist()
+    #             },
+    #             "forecast": {
+    #                 "years": forecast_years,
+    #                 "patents": [round(float(p), 2) for p in preds]
+    #             }
+    #         }), 200
+
+    #     except Exception as e:
+    #         import traceback
+    #         traceback.print_exc()
+    #         return jsonify({"ok": False, "error": str(e)}), 500
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    
+    
+    
+    @app.route('/api/patents/yearly_counts', methods=['GET'])
+    def get_patent_yearly_counts():
+        """
+        Returns yearly counts of patents from raw_patents.
+        Groups by first_filing_year.
+        """
+        try:
+            query = text('''
+                SELECT first_filing_year AS year, COUNT(*) AS count
+                FROM raw_patents
+                WHERE first_filing_year IS NOT NULL
+                GROUP BY first_filing_year
+                ORDER BY year
+            ''')
+            with engine.connect() as conn:
+                result = conn.execute(query).fetchall()
+
+            if not result:
+                return jsonify({"message": "No patent data available"}), 404
+
+            years = [int(r[0]) for r in result]
+            counts = [r[1] for r in result]
+
+            return jsonify({
+                "labels": years,
+                "datasets": [{
+                    "label": "Patents per Year",
+                    "data": counts,
+                    
+                }]
+            }), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
+    @app.route('/api/publications/yearly_counts', methods=['GET'])
+    def get_publication_yearly_counts():
+        """
+        Returns yearly counts of publications from research_data3.
+        Groups by year column.
+        """
+        try:
+            query = text('''
+                SELECT year, COUNT(*) AS count
+                FROM research_data3
+                WHERE year IS NOT NULL
+                GROUP BY year
+                ORDER BY year
+            ''')
+            with engine.connect() as conn:
+                result = conn.execute(query).fetchall()
+
+            if not result:
+                return jsonify({"message": "No publication data available"}), 404
+
+            years = [int(r[0]) for r in result]
+            counts = [r[1] for r in result]
+
+            return jsonify({
+                "labels": years,
+                "datasets": [{
+                    "label": "Publications per Year",
+                    "data": counts,
+                 
+                }]
+            }), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
         
 
            

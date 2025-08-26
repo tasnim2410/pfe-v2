@@ -1,0 +1,8 @@
+pat11; Wireless Sensor Networks
+pat12; Embedded Systems
+pat13; Cloud Infrastructure
+pat14; Data Mining
+pub11; Wireless Sensor Networks
+pub12; Embedded Systems
+pub13; Cloud Infrastructure
+pub14; Data Mining
