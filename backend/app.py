@@ -15,6 +15,7 @@ import concurrent.futures
 from family_members import process_patent_api , PatentsSearch , process_rows
 from flask import Flask, request, jsonify
 import logging
+from outputs.scaler import GlobalScalers
 
 import concurrent.futures
 import time
@@ -49,7 +50,7 @@ from flask import jsonify
 import math
 from collections import Counter ,defaultdict
 from keywords_coccurrence_trends import track_cooccurrence_trends , clean_text_remove_stopwords
-from growth_rate import patent_growth_summary
+from growth_rate import patent_growth_summary , compute_patent_growth_from_counts
 from keyword_analysis import preprocess_text, analyze_topic_evolution
 import logging
 from patent_trend_by_field import get_ipc_meaning , normalize_engineering, get_patent_fields
@@ -68,7 +69,7 @@ import threading
 from werkzeug.serving import make_server
 from applicant_analysis import extract_applicant_collaboration_network
 from keyword_analysis2 import research_preprocess_text, research_analyze_topic_evolution , build_research_keyword_df
-
+import growth_rate as grmod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from dotenv import load_dotenv
@@ -99,7 +100,18 @@ import base64
 from ops_search import json_to_cql, fetch_to_dataframe ,extract_keyword_pairs
 # add near your other imports in app.py
 import numpy as np
+from tensorflow.keras.models import load_model
+from sqlalchemy import text
+from flask import request, jsonify
+import pandas as pd
+import numpy as np
+import os, joblib
+from datetime import date
 
+# use the SAME feature-engineering as during training
+from lstm2 import create_enhanced_features, _y_inv
+from growth_rate import compute_patent_growth_from_counts  # past/current growth utils
+import joblib
 from prophet_single_series import (
     run_for_current_series,
     fetch_current_series,
@@ -109,13 +121,28 @@ from prophet_single_series import (
     HORIZON_DEFAULT,
     MAX_LAG_DEFAULT,
     _require_engine,  
-    validate_horizon # to get a DB engine for fetch_current_series
+    validate_horizon ,
+    compute_patent_growth_from_counts , 
+    # to get a DB engine for fetch_current_series
 )
-#from lstm import _y_inv, create_sequences_for_tech, fit_scaler_guarded, build_tech_dataframe, N_STEPS
-
+from tensorflow.keras.models import load_model
+from lstm import build_tech_dataframe, create_sequences_for_tech, _y_inv, fit_scaler_guarded
+from sqlalchemy import text
+import pandas as pd
+from flask import request, jsonify
 import uuid
 from db import RawPatent, SearchKeyword
+import os, joblib
+from tensorflow.keras.models import load_model
+from sqlalchemy import text
+from flask import request, jsonify
+import pandas as pd
+import numpy as np
+import os, joblib
+from datetime import date
 
+# === MUST MATCH TRAINING PIPELINE ===
+from growth_rate import compute_patent_growth_from_counts  # past/current growth helpers
 class ServerThread(threading.Thread):
     def __init__(self, app, port):
         threading.Thread.__init__(self)
@@ -3906,37 +3933,33 @@ def create_app():
             return float(x)
         except Exception:
             return None
+        
+        
+        
+        
+        
+        
 
 
 
     @app.route("/api/prophet_forecast", methods=["GET", "POST"])
     def api_prophet_forecast():
         """
-        Returns JSON:
-        {
-        "tech": "current",
-        "best_lag": 3,
-        "xcorr": 0.287,
-        "metrics": {...},
-        "publications": {
-            "history": [{year, ds, count}],
-            "test":     [{year, ds, actual, yhat, yhat_lower, yhat_upper}],
-            "forecast": [{year, ds, yhat, yhat_lower, yhat_upper}]
-        },
-        "patents": {
-            "history": [{year, ds, count}],
-            "test":     [{year, ds, actual, yhat_baseline, yhat_with_pub_reg}],
-            "forecast": {
-            "with_pub_ar": [{year, ds, yhat}],
-            "baseline":    [{year, ds, yhat}]
-            }
-        }
-        }
+        Prophet single-series forecasts + growth-rate diagnostics.
+
+        NEW in this version:
+          - Computes the "past" growth rate twice:
+              (A) Actual past GR from historical counts (unchanged).
+              (B) Counterfactual past GR using predictions only:
+                  Train on data up to the year BEFORE the past-window,
+                  forecast the whole past-window years, then compute GR
+              over that window using the predicted counts. This lets
+              you compare model-vs-actual on the exact historical window.
         """
         try:
             payload = request.get_json(silent=True) or {}
 
-            # Get and validate horizon parameter
+            # ------------------ Parse inputs (unchanged) ------------------
             horizon    = int(payload.get("horizon", HORIZON_DEFAULT))
             horizon    = validate_horizon(horizon)
             test_years = int(payload.get("test_years", request.args.get("test_years", TEST_YEARS_DEFAULT)))
@@ -3945,16 +3968,15 @@ def create_app():
             max_lag    = int(payload.get("max_lag",    request.args.get("max_lag",    MAX_LAG_DEFAULT)))
             tech_label =       payload.get("tech_label", request.args.get("tech_label", "current"))
 
-            # NEW: explicit split controls
+            # Optional explicit split controls (kept for compatibility)
             split_year      = payload.get("split_year",      request.args.get("split_year"))
             eval_start_year = payload.get("eval_start_year", request.args.get("eval_start_year"))
             eval_end_year   = payload.get("eval_end_year",   request.args.get("eval_end_year"))
-
             split_year      = int(split_year)      if split_year is not None else None
             eval_start_year = int(eval_start_year) if eval_start_year is not None else None
             eval_end_year   = int(eval_end_year)   if eval_end_year is not None else None
 
-            # Run full pipeline (DB URL via dotenv inside the module)
+            # ------------------ Run main pipeline (unchanged) ------------------
             pubs_fc, pats_fc, metrics_df, summary, pubs_test_eval, pats_test_eval = run_for_current_series(
                 tech_label=tech_label,
                 pub_tail_trunc=pub_tail,
@@ -3967,7 +3989,7 @@ def create_app():
                 eval_end_year=eval_end_year,
             )
 
-            # also include history for plotting
+            # Keep history for plotting
             engine = _require_engine()
             pubs_hist, pats_hist = fetch_current_series(
                 engine=engine,
@@ -3975,6 +3997,7 @@ def create_app():
                 pat_tail_trunc=pat_tail
             )
 
+            # Prepare history payloads (unchanged)
             pubs_history = [
                 {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "count": int(r.pub_count)}
                 for r in pubs_hist.itertuples(index=False)
@@ -3984,40 +4007,17 @@ def create_app():
                 for r in pats_hist.itertuples(index=False)
             ]
 
-            pubs_test_points = [
-                {
-                "year": int(r.year),
-                "ds": _year_to_ds(int(r.year)),
-                "actual": _safe_float(r.actual),
-                "yhat": _safe_float(r.yhat),
-                "yhat_lower": _safe_float(r.yhat_lower),
-                "yhat_upper": _safe_float(r.yhat_upper),
-                }
-                for r in pubs_test_eval.itertuples(index=False)
-            ]
-
+            # ---------- Build production forecast lists (unchanged) ----------
             pubs_forecast = [
                 {
-                "year": int(r.year),
-                "ds": _year_to_ds(int(r.year)),
-                "yhat": _safe_float(r.pub_count_hat),
-                "yhat_lower": _safe_float(r.yhat_lower),
-                "yhat_upper": _safe_float(r.yhat_upper),
+                    "year": int(r.year),
+                    "ds": _year_to_ds(int(r.year)),
+                    "yhat": _safe_float(r.pub_count_hat),
+                    "yhat_lower": _safe_float(r.yhat_lower),
+                    "yhat_upper": _safe_float(r.yhat_upper),
                 }
                 for r in pubs_fc.itertuples(index=False)
             ]
-
-            pats_test_points = [
-                {
-                "year": int(r.year),
-                "ds": _year_to_ds(int(r.year)),
-                "actual": _safe_float(r.actual),
-                "yhat_baseline": _safe_float(r.yhat_baseline),
-                "yhat_with_pub_reg": _safe_float(r.yhat_with_pub_reg),
-                }
-                for r in pats_test_eval.itertuples(index=False)
-            ]
-
             pats_with = [
                 {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "yhat": _safe_float(r.yhat_with_pub_reg)}
                 for r in pats_fc.itertuples(index=False)
@@ -4027,6 +4027,30 @@ def create_app():
                 for r in pats_fc.itertuples(index=False)
             ]
 
+            # ---------- Use the already-computed TEST predictions (unchanged) ----------
+            pubs_test_points = [
+                {
+                    "year": int(r.year),
+                    "ds": _year_to_ds(int(r.year)),
+                    "actual": _safe_float(r.actual),
+                    "yhat": _safe_float(r.yhat),
+                    "yhat_lower": _safe_float(r.yhat_lower),
+                    "yhat_upper": _safe_float(r.yhat_upper),
+                }
+                for r in pubs_test_eval.itertuples(index=False)
+            ]
+            pats_test_points = [
+                {
+                    "year": int(r.year),
+                    "ds": _year_to_ds(int(r.year)),
+                    "actual": _safe_float(r.actual),
+                    "yhat_baseline": _safe_float(r.yhat_baseline),
+                    "yhat_with_pub_reg": _safe_float(r.yhat_with_pub_reg),
+                }
+                for r in pats_test_eval.itertuples(index=False)
+            ]
+
+            # ---------- Metrics (unchanged) ----------
             md = metrics_df.iloc[0].to_dict() if len(metrics_df) else {}
             metrics = {
                 "mae_pubs": _safe_float(md.get("mae_pubs")),
@@ -4040,11 +4064,108 @@ def create_app():
                 "ampe_patents_with_reg": _safe_float(md.get("ampe_patents_with_reg")),
             }
 
+            # =====================================================================
+            # GROWTH RATE BLOCKS
+            # =====================================================================
+
+            # 1) Build a combined "actual + future" counts table for main plotting
+            #    (unchanged behavior for main dashboard).
+            pats_actual = pats_hist.loc[:, ["year", "patent_count"]].copy()
+            pats_future = pats_fc.loc[:, ["year", "yhat_with_pub_reg"]].rename(
+                columns={"yhat_with_pub_reg": "patent_count"}
+            )
+            pats_counts_full = (
+                pd.concat([pats_actual, pats_future], ignore_index=True)
+                  .sort_values(["year"])
+                  .drop_duplicates(subset=["year"], keep="last")
+                  .sort_values("year")
+                  .reset_index(drop=True)
+            )
+
+            # 2) Compute the "actual" past and current GR exactly as before.
+            past_GR, past_start, past_end, past_label, curr_GR, curr_start, curr_end, curr_label = \
+                compute_patent_growth_from_counts(pats_counts_full)
+
+            # 3) NEW: Counterfactual "past" GR using forecasts only on the past window.
+            #    We re-run the pipeline with the evaluation window set to [past_start..past_end],
+            #    which ensures TRAIN ≤ (past_start-1) and TEST = that past window. We then
+            #    stitch the counts as [actual up to past_start-1] + [predicted for past window]
+            #    and compute GR again over the same window.
+            past_forecast_GR = None
+            past_forecast_label = None
+
+            if past_start is not None and past_end is not None and past_start <= past_end:
+                # Re-run with train cutoff at (past_start - 1), test on the past window
+                _, _, _, _, _, pats_test_eval_past = run_for_current_series(
+                    tech_label=tech_label,
+                    pub_tail_trunc=pub_tail,
+                    pat_tail_trunc=pat_tail,
+                    max_lag=max_lag,
+                    test_years=(past_end - past_start + 1),
+                    horizon=horizon,  # not used for this eval
+                    split_year=None,
+                    eval_start_year=past_start,
+                    eval_end_year=past_end,
+                )
+
+                if len(pats_test_eval_past):
+                    # Build the counterfactual series:
+                    #   - actual counts up to (past_start - 1)
+                    #   - predicted counts for [past_start .. past_end]
+                    before_mask = pats_hist["year"] < past_start
+                    prior_actual = pats_hist.loc[before_mask, ["year", "patent_count"]].copy()
+
+                    preds = pats_test_eval_past.loc[:, ["year", "yhat_with_pub_reg"]].rename(
+                        columns={"yhat_with_pub_reg": "patent_count"}
+                    )
+
+                    pats_counterfactual = (
+                        pd.concat([prior_actual, preds], ignore_index=True)
+                        .sort_values("year")
+                        .reset_index(drop=True)
+                    )
+
+                    # Compute GR again on this "actual+predicted-past" timeline.
+                    past_cf_GR, cf_start, cf_end, past_cf_label, *_ = \
+                        compute_patent_growth_from_counts(pats_counterfactual)
+
+                    # Keep only the past-window values
+                    past_forecast_GR = past_cf_GR
+                    past_forecast_label = past_cf_label
+
+            # Pack growth for response
+            def _pack_growth(percent, label, start_year, end_year):
+                return {
+                    "percent": _safe_float(percent),
+                    "label": label,
+                    "window": {
+                        "start_year": int(start_year) if start_year is not None else None,
+                        "end_year": int(end_year) if end_year is not None else None,
+                    },
+                }
+
+            growth = {
+                # Unchanged: actual past and current on (actual + future) series
+                "past": _pack_growth(past_GR, past_label, past_start, past_end),
+                "current": _pack_growth(curr_GR, curr_label, curr_start, curr_end),
+            }
+
+            # New: model-vs-actual “past” comparison (if computed)
+            if past_forecast_GR is not None:
+                growth["past_counterfactual"] = _pack_growth(
+                    past_forecast_GR, past_forecast_label, past_start, past_end
+                )
+                growth["past_compare"] = {
+                    "delta_percent": _safe_float(past_forecast_GR - past_GR) if past_GR is not None else None
+                }
+
+            # ------------------ Shape final response (unchanged) ------------------
             resp = {
                 "tech": summary.tech,
                 "best_lag": int(summary.best_lag),
                 "xcorr": _safe_float(summary.xcorr),
                 "metrics": metrics,
+                "growth": growth,
                 "publications": {
                     "history": pubs_history,
                     "test": pubs_test_points,
@@ -4059,132 +4180,582 @@ def create_app():
                     }
                 }
             }
+        
+
             return jsonify(resp), 200
 
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
 
-    
-    # @app.route("/api/lstm_forecast", methods=["GET", "POST"])
-    # def lstm_forecast_single_series():
-    #     """
-    #     Forecast future patent counts using your trained LSTM model.
-    #     - History is built from your real DB:
-    #       • Patents per year from raw_patents (grouped by first_filing_year)
-    #       • Publications per year from research_data3 (grouped by year)
-    #     - Uses the same scaler + inverse transforms as your LSTM utilities.
-    #     Request body (optional):
-    #       { "horizon": <int, default 5> }
-    #     Response:
-    #       {
-    #         "ok": true,
-    #         "history": {"years": [...], "patents": [...]},
-    #         "forecast": {"years": [...], "patents": [...]}
-    #       }
-    #     """
-    #     try:
-    #         # 1) Read optional horizon from JSON
-    #         payload = request.get_json(silent=True) or {}
-    #         horizon = int(payload.get("horizon", 5))
 
-    #         # 2) Load yearly data directly from your DB using your existing queries
-    #         #    (These are the exact queries you already use in your endpoints.)
-    #         patents_q = text("""
-    #             SELECT first_filing_year AS year, COUNT(*) AS count
-    #             FROM raw_patents
-    #             WHERE first_filing_year IS NOT NULL
-    #             GROUP BY first_filing_year
-    #             ORDER BY year
-    #         """)
 
-    #         publications_q = text("""
-    #             SELECT year, COUNT(*) AS count
-    #             FROM research_data3
-    #             WHERE year IS NOT NULL
-    #             GROUP BY year
-    #             ORDER BY year
-    #         """)
+        
 
-    #         with engine.connect() as conn:
-    #             pat_rows = conn.execute(patents_q).fetchall()
-    #             pub_rows = conn.execute(publications_q).fetchall()
 
-    #         if not pat_rows:
-    #             return jsonify({"ok": False, "error": "No patent data available (raw_patents)."}), 400
-    #         if not pub_rows:
-    #             return jsonify({"ok": False, "error": "No publication data available (research_data3)."}), 400
+    EPS = 1e-9
 
-    #         # 3) Convert to DataFrames
-    #         pat_df = pd.DataFrame(pat_rows, columns=["year", "patent_count"])
-    #         pub_df = pd.DataFrame(pub_rows, columns=["year", "publication_count"])
+    def _get_int(payload, name, default, minv=None, maxv=None):
+        if name in payload:
+            try: v = int(str(payload[name]).strip())
+            except: v = default
+        else:
+            qv = request.args.get(name)
+            if qv is None: v = default
+            else:
+                try: v = int(qv)
+                except: v = default
+        if minv is not None: v = max(minv, v)
+        if maxv is not None: v = min(maxv, v)
+        return v
 
-    #         # 4) Align by year: left join on patent years (or inner join if you prefer strict overlap)
-    #         #    We'll use an inner join so the LSTM sees aligned years with both features.
-    #         merged = pd.merge(pat_df, pub_df, on="year", how="inner")
+    def _mspe(y_true, y_pred, eps=EPS):
+        yt = np.asarray(y_true, float)
+        yp = np.asarray(y_pred, float)
+        m = np.isfinite(yt) & np.isfinite(yp)
+        if not np.any(m): return float('nan')
+        denom = np.maximum(np.abs(yt[m]), eps)
+        return float(np.mean(((yt[m] - yp[m]) / denom) ** 2) * 100.0)
 
-    #         # 5) Rename to the columns your build_tech_dataframe/create_sequences expect
-    #         #    build_tech_dataframe(pat_df, pub_df, tech) in your old code worked per-technology;
-    #         #    here we’re providing a single-technology frame with 'year', 'patents', 'publications'.
-    #         df = merged.rename(columns={"patent_count": "patents", "publication_count": "publications"}).sort_values("year")
+    def _build_enhanced(df_hist):
+        df_enh = create_enhanced_features(df_hist.copy())
+        feature_cols = [
+            'patents','publications',
+            'patents_ma3','publications_ma3',
+            'patents_growth','publications_growth',
+        'patent_pub_ratio','total_activity',
+        'patents_lag1','publications_lag1',
+        'patents_volatility','publications_volatility',
+        'patents_trend','publications_trend'
+        ]
+        X = df_enh[feature_cols].astype(float).values
+        years = df_enh['year'].astype(int).values
+        return df_enh, X, years, feature_cols
 
-    #         # Basic data sufficiency check for the sequence length
-    #         if df.shape[0] < N_STEPS + 1:
-    #             return jsonify({"ok": False, "error": f"Not enough aligned yearly rows for forecasting (need > {N_STEPS})."}), 400
+    def _make_windows(X, years, n_steps):
+        X_all, tgt_years = [], []
+        for i in range(len(X) - n_steps):
+            X_all.append(X[i:i+n_steps])
+            tgt_years.append(int(years[i+n_steps]))
+        return np.array(X_all), np.array(tgt_years, int)
 
-    #         # 6) Prepare sequences for the model
-    #         #    We wrap into the API you already use so scaling & sequence shapes match the trained model.
-    #         #    Internally, your utilities expect columns ['year', 'patents', 'publications'].
-    #         #    If build_tech_dataframe is strictly required, we mimic its output here:
-    #         df_for_sequences = df[["year", "patents", "publications"]].copy()
+    def _upsert_counts(df_counts, year, value):
+        df = df_counts.copy()
+        if (df['year'] == year).any():
+            df.loc[df['year'] == year, 'patent_count'] = float(value)
+        else:
+            df = pd.concat([df, pd.DataFrame([{'year': int(year), 'patent_count': float(value)}])], ignore_index=True)
+        return df.sort_values('year').reset_index(drop=True)
 
-    #         # create full sequence matrices
-    #         X_all, y_all, _, _ = create_sequences_for_tech(df_for_sequences)
+    @app.route('/api/lstm_forecast', methods=['GET', 'POST'])
+    def lstm_forecast():
+        try:
+            payload    = request.get_json(silent=True) or {}
+            horizon    = _get_int(payload, "horizon",   5, 1)
+            pat_trunc  = _get_int(payload, "pat_trunc", 0, 0)
+            pub_trunc  = _get_int(payload, "pub_trunc", 0, 0)
+            test_years = _get_int(payload, "test_years", 0, 0)
+            split_year = payload.get("split_year", request.args.get("split_year"))
+            split_year = int(split_year) if split_year not in (None, "", "null") else None
 
-    #         # most recent rolling window
-    #         recent_window = df_for_sequences[["patents", "publications"]].values[-N_STEPS:]
+            # ---- model + scalers (MUST match training) ----
+            model_path  = os.path.join("backend/outputs", "lstm_patent_forecaster_enhanced.keras")
+            scaler_path = os.path.join("backend/outputs", "global_scalers.pkl")
+            model   = load_model(model_path)
+            scalers = joblib.load(scaler_path)
+            x_scaler = scalers["x_scaler"] if isinstance(scalers, dict) else scalers.x_scaler
+            y_scaler = scalers["y_scaler"] if isinstance(scalers, dict) else scalers.y_scaler
 
-    #         # 7) Fit scalers
-    #         x_scaler = fit_scaler_guarded(X_all.reshape(-1, 2))
-    #         y_scaler = fit_scaler_guarded(y_all.reshape(-1, 1))
+            # ✅ infer step length from model (no hard-coded N_STEPS)
+            n_steps = int((model.input_shape[1] if isinstance(model.input_shape, (list, tuple)) else 5) or 5)
 
-    #         # 8) Load your trained model (only on demand in this route)
-    #         model_path = os.path.join("backend", "outputs", "lstm_patent_forecaster.keras")
-    #         model = tf.keras.models.load_model(model_path)
+            # ---- fetch DB data ----
+            with engine.connect() as conn:
+                df_pat_raw = pd.read_sql(text("""
+                    SELECT first_filing_year AS year
+                    FROM raw_patents
+                    WHERE first_filing_year IS NOT NULL
+                """), conn)
+            if df_pat_raw.empty:
+                return jsonify({"ok": False, "error": "No patent data found"}), 404
 
-    #         # 9) Roll out forecasts autoregressively on the 'patents' target
-    #         current_input = recent_window.copy()
-    #         preds = []
-    #         for _ in range(horizon):
-    #             scaled_in = x_scaler.transform(current_input).reshape(1, N_STEPS, 2)
-    #             pred_scaled = model.predict(scaled_in, verbose=0)
-    #             pred_unscaled = y_scaler.inverse_transform(pred_scaled).flatten()[0]
-    #             # apply your original inverse-mapping for y (if any)
-    #             pred = _y_inv(pred_unscaled)
-    #             preds.append(pred)
-    #             # shift window: new row = [predicted_patents, keep last observed publications feature]
-    #             current_input = np.vstack([current_input[1:], [pred, current_input[-1][1]]])
+            with engine.connect() as conn:
+                df_pub_raw = pd.read_sql(text("""
+                    SELECT year
+                FROM research_data3
+                WHERE year IS NOT NULL
+                """), conn)
+            if df_pub_raw.empty:
+                return jsonify({"ok": False, "error": "No publication data found"}), 404
 
-    #         last_year = int(df_for_sequences["year"].iloc[-1])
-    #         forecast_years = list(range(last_year + 1, last_year + 1 + horizon))
+            # ---- truncation ----
+            max_pat_before = int(df_pat_raw["year"].max())
+            if pat_trunc > 0:
+                df_pat_raw = df_pat_raw[df_pat_raw["year"] <= max_pat_before - pat_trunc]
+            if df_pat_raw.empty:
+                return jsonify({"ok": False, "error": "No patent data left after truncation"}), 400
+            max_pat_after = int(df_pat_raw["year"].max())
+            eff_pat_trunc = max_pat_before - max_pat_after
 
-    #         return jsonify({
-    #             "ok": True,
-    #             "history": {
-    #                 "years": df_for_sequences["year"].astype(int).tolist(),
-    #                 "patents": df_for_sequences["patents"].astype(float).tolist()
-    #             },
-    #             "forecast": {
-    #                 "years": forecast_years,
-    #                 "patents": [round(float(p), 2) for p in preds]
-    #             }
-    #         }), 200
+            max_pub_before = int(df_pub_raw["year"].max())
+            if pub_trunc > 0:
+                df_pub_raw = df_pub_raw[df_pub_raw["year"] <= max_pub_before - pub_trunc]
+            if df_pub_raw.empty:
+                return jsonify({"ok": False, "error": "No publication data left after truncation"}), 400
+            max_pub_after = int(df_pub_raw["year"].max())
+            eff_pub_trunc = max_pub_before - max_pub_after
 
-    #     except Exception as e:
-    #         import traceback
-    #         traceback.print_exc()
-    #         return jsonify({"ok": False, "error": str(e)}), 500
+            # ---- yearly counts + merge ----
+            pat_counts = df_pat_raw.groupby('year').size().reset_index(name='patents').astype({'year': int})
+            pub_counts = df_pub_raw.groupby('year').size().reset_index(name='publications').astype({'year': int})
 
+            merged = (
+                pd.merge(pat_counts, pub_counts, on='year', how='inner')
+              .sort_values('year')
+              .reset_index(drop=True)
+            )
+            if len(merged) < (n_steps + 1):
+                return jsonify({
+                    "ok": False,
+                    "error": f"Not enough merged data after truncation; need ≥{n_steps+1} years, have {len(merged)}",
+                    "years_available": merged["year"].tolist()
+            }), 400
+
+            years_all = merged["year"].tolist()
+            y_min, y_max = int(merged["year"].min()), int(merged["year"].max())
+
+            # ---- enhanced features ----
+            df_enh, X_raw, years_vec, feature_cols = _build_enhanced(
+                merged.loc[:, ["year", "patents", "publications"]]
+            )
+            if hasattr(x_scaler, "n_features_in_") and X_raw.shape[1] != x_scaler.n_features_in_:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Feature mismatch: X has {X_raw.shape[1]} cols, scaler expects {x_scaler.n_features_in_}"
+                }), 500
+
+            X_scaled = x_scaler.transform(X_raw)
+            X_win, target_years = _make_windows(X_scaled, years_vec, n_steps)
+
+            # ---- evaluation split ----
+            if split_year is not None:
+                split_year = max(y_min, min(int(split_year), y_max - 1))
+                test_years_list = list(range(split_year + 1, y_max + 1))
+                test_mask  = np.isin(target_years, test_years_list)
+            else:
+                if test_years > 0:
+                    split_year = y_max - test_years
+                    test_years_list = list(range(split_year + 1, y_max + 1))
+                    test_mask  = np.isin(target_years, test_years_list)
+                else:
+                    test_years_list = []
+                    test_mask  = np.zeros_like(target_years, dtype=bool)
+
+            mspe = None
+            test_points = []
+            if np.any(test_mask):
+                X_test = X_win[test_mask]
+                yrs_t  = target_years[test_mask]
+                y_scaled = model.predict(X_test, verbose=0).ravel()
+                y_unscaled = y_scaler.inverse_transform(y_scaled.reshape(-1,1)).ravel()
+                y_pred = _y_inv(y_unscaled)
+                y_pred = np.maximum(y_pred, 0.0)
+                y_true = merged.set_index("year").loc[yrs_t, "patents"].astype(float).values
+                mspe = _mspe(y_true, y_pred)
+                test_points = [
+                    {"year": int(y), "actual": float(a), "yhat": float(p)}
+                    for y, a, p in zip(yrs_t.tolist(), y_true.tolist(), y_pred.tolist())
+                ]
+
+        # ---- production forecast (recursive) ----
+            last_year_hist = int(merged["year"].iloc[-1])
+            if X_win.shape[0] == 0:
+                return jsonify({"ok": False, "error": "Not enough rows to form a window."}), 400
+            window = X_win[-1]  # (n_steps, n_features)
+            hist_df = merged.loc[:, ["year", "patents", "publications"]].copy()
+            last_pub_unscaled = float(hist_df["publications"].iloc[-1])
+
+            future = []
+            for i in range(horizon):
+                X_input  = window.reshape(1, n_steps, window.shape[1])
+                y_scaled = model.predict(X_input, verbose=0)[0][0]
+                y_unscaled = float(y_scaler.inverse_transform([[y_scaled]])[0, 0])
+                y_pred     = float(_y_inv(y_unscaled))
+                y_pred     = max(0.0, y_pred)
+
+                fut_year = last_year_hist + i + 1
+                future.append({"year": fut_year, "predicted_patents": y_pred})
+
+                hist_df = pd.concat([
+                    hist_df,
+                    pd.DataFrame([{"year": fut_year, "patents": y_pred, "publications": last_pub_unscaled}])
+                ], ignore_index=True)
+
+                df_e2, X_raw2, years2, _ = _build_enhanced(hist_df)
+                X_scaled2 = x_scaler.transform(X_raw2)
+                window = X_scaled2[-n_steps:, :]
+
+        # ======= GROWTH RATES =======
+            current_year = date.today().year
+
+            pats_actual = (
+                pat_counts.rename(columns={"patents":"patent_count"})
+                          .loc[:, ["year","patent_count"]]
+                          .sort_values("year")
+                          .reset_index(drop=True)
+            )
+
+            # 1) Past + current (actual only)
+            past_GR_a, past_s_a, past_e_a, past_lbl_a, curr_GR_a, curr_s_a, curr_e_a, curr_lbl_a = \
+                compute_patent_growth_from_counts(pats_actual)
+
+            # 2) Current recomputed with forecast for [current_year, +1, +2] if available
+            pats_curr_hybrid = pats_actual.copy()
+            future_map = {int(r["year"]): float(r["predicted_patents"]) for r in future}
+            for y in [current_year, current_year+1, current_year+2]:
+                if y in future_map:
+                    pats_curr_hybrid = _upsert_counts(pats_curr_hybrid, y, future_map[y])
+            _, _, _, _, curr_GR_h, curr_s_h, curr_e_h, curr_lbl_h = \
+                compute_patent_growth_from_counts(pats_curr_hybrid)
+
+            # 3) Evaluation: past growth with model values (replace test years by predictions)
+            eval_growth = None
+            if len(test_points) > 0:
+                pats_eval = pats_actual.copy()
+                for tp in test_points:
+                    pats_eval = _upsert_counts(pats_eval, int(tp["year"]), float(tp["yhat"]))
+                past_GR_m, past_s_m, past_e_m, past_lbl_m, _, _, _, _ = \
+                    compute_patent_growth_from_counts(pats_eval)
+
+                eval_growth = {
+                    "past_actual_percent": past_GR_a,
+                    "past_model_percent": past_GR_m,
+                    "delta_percent": (past_GR_m - past_GR_a) if np.isfinite(past_GR_a) and np.isfinite(past_GR_m) else None,
+                    "window": {"start_year": past_s_m, "end_year": past_e_m},
+                    "labels": {"actual": past_lbl_a, "model": past_lbl_m}
+                }
+            
+
+            return jsonify({
+                "ok": True,
+                "params": {
+                    "horizon": horizon,
+                    "split_year": int(split_year) if split_year is not None else None,
+                    "test_years": test_years if split_year is None else None
+                },
+                "applied_truncation": {
+                    "pat_trunc_requested": pat_trunc,
+                    "pub_trunc_requested": pub_trunc,
+                    "pat_trunc_effective": eff_pat_trunc,
+                    "pub_trunc_effective": eff_pub_trunc
+                },
+                "history": {
+                    "years_used": years_all,
+                    "last_history_year": y_max
+                },
+                "evaluation": {
+                    "test_years": test_years_list if split_year is not None or test_years > 0 else [],
+                    "mspe_percent": mspe,
+                    "points": test_points,
+                    "past_growth_comparison": eval_growth
+                },
+                "growth": {
+                    "past_actual": {
+                        "percent": past_GR_a,
+                        "label": past_lbl_a,
+                        "window": {"start_year": past_s_a, "end_year": past_e_a}
+                    },
+                    "current_actual": {
+                        "percent": curr_GR_a,
+                        "label": curr_lbl_a,
+                        "window": {"start_year": curr_s_a, "end_year": curr_e_a}
+                    },
+                    "current_with_forecast": {
+                        "percent": curr_GR_h,
+                        "label": curr_lbl_h,
+                        "window": {"start_year": curr_s_h, "end_year": curr_e_h},
+                        "note": "current window recomputed with forecast for [current_year, +1, +2] where available"
+                    }
+                },
+                "forecast": future,
+                "start_year": last_year_hist + 1,
+                "forecast_horizon": horizon
+            }), 200
+
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+
+        
+        
+        
+        
+
+    @app.route('/api/lstm_forecast_sereis', methods=['GET', 'POST'])
+    def lstm_forecast_series():
+        try:
+            payload    = request.get_json(silent=True) or {}
+            horizon    = _get_int(payload, "horizon",   5, 1)
+            pat_trunc  = _get_int(payload, "pat_trunc", 0, 0)
+            pub_trunc  = _get_int(payload, "pub_trunc", 0, 0)
+            test_years = _get_int(payload, "test_years", 0, 0)
+            split_year = payload.get("split_year", request.args.get("split_year"))
+            split_year = int(split_year) if split_year not in (None, "", "null") else None
+
+            # ---- model + scalers (MUST match training) ----
+            model_path  = os.path.join("backend/outputs", "lstm_patent_forecaster_enhanced_series.keras")
+            scaler_path = os.path.join("backend/outputs", "global_scalers.pkl")
+            model   = load_model(model_path)
+            scalers = joblib.load(scaler_path)
+            x_scaler = scalers["x_scaler"] if isinstance(scalers, dict) else scalers.x_scaler
+            y_scaler = scalers["y_scaler"] if isinstance(scalers, dict) else scalers.y_scaler
+
+            # infer step length from saved model
+            n_steps = int((model.input_shape[1] if isinstance(model.input_shape, (list, tuple)) else 5) or 5)
+
+            # ---- fetch DB data ----
+            with engine.connect() as conn:
+                df_pat_raw = pd.read_sql(text("""
+                    SELECT first_filing_year AS year
+                    FROM raw_patents
+                    WHERE first_filing_year IS NOT NULL
+                """), conn)
+            if df_pat_raw.empty:
+                return jsonify({"ok": False, "error": "No patent data found"}), 404
+
+            with engine.connect() as conn:
+                df_pub_raw = pd.read_sql(text("""
+                    SELECT year
+                    FROM research_data3
+                    WHERE year IS NOT NULL
+                """), conn)
+            if df_pub_raw.empty:
+                return jsonify({"ok": False, "error": "No publication data found"}), 404
+
+            # ---- truncation ----
+            max_pat_before = int(df_pat_raw["year"].max())
+            if pat_trunc > 0:
+                df_pat_raw = df_pat_raw[df_pat_raw["year"] <= max_pat_before - pat_trunc]
+            if df_pat_raw.empty:
+                return jsonify({"ok": False, "error": "No patent data left after truncation"}), 400
+            max_pat_after = int(df_pat_raw["year"].max())
+            eff_pat_trunc = max_pat_before - max_pat_after
+
+            max_pub_before = int(df_pub_raw["year"].max())
+            if pub_trunc > 0:
+                df_pub_raw = df_pub_raw[df_pub_raw["year"] <= max_pub_before - pub_trunc]
+            if df_pub_raw.empty:
+                return jsonify({"ok": False, "error": "No publication data left after truncation"}), 400
+            max_pub_after = int(df_pub_raw["year"].max())
+            eff_pub_trunc = max_pub_before - max_pub_after
+
+            # ---- yearly counts + merge ----
+            pat_counts = df_pat_raw.groupby('year').size().reset_index(name='patents').astype({'year': int})
+            pub_counts = df_pub_raw.groupby('year').size().reset_index(name='publications').astype({'year': int})
+
+            merged = (
+                pd.merge(pat_counts, pub_counts, on='year', how='inner')
+                .sort_values('year')
+                .reset_index(drop=True)
+            )
+            if len(merged) < (n_steps + 1):
+                return jsonify({
+                    "ok": False,
+                    "error": f"Not enough merged data after truncation; need ≥{n_steps+1} years, have {len(merged)}",
+                    "years_available": merged["year"].tolist()
+                }), 400
+
+            years_all = merged["year"].tolist()
+            y_min, y_max = int(merged["year"].min()), int(merged["year"].max())
+
+            # ---- enhanced features (same as training) ----
+            df_enh, X_raw, years_vec, feature_cols = _build_enhanced(
+                merged.loc[:, ["year", "patents", "publications"]]
+            )
+            if hasattr(x_scaler, "n_features_in_") and X_raw.shape[1] != x_scaler.n_features_in_:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Feature mismatch: X has {X_raw.shape[1]} cols, scaler expects {x_scaler.n_features_in_}"
+                }), 500
+
+            X_scaled = x_scaler.transform(X_raw)
+            X_win, target_years = _make_windows(X_scaled, years_vec, n_steps)
+
+            # ---- evaluation split ----
+            if split_year is not None:
+                split_year = max(y_min, min(int(split_year), y_max - 1))
+                test_years_list = list(range(split_year + 1, y_max + 1))
+                test_mask  = np.isin(target_years, test_years_list)
+            else:
+                if test_years > 0:
+                    split_year = y_max - test_years
+                    test_years_list = list(range(split_year + 1, y_max + 1))
+                    test_mask  = np.isin(target_years, test_years_list)
+                else:
+                    test_years_list = []
+                    test_mask  = np.zeros_like(target_years, dtype=bool)
+
+            mspe = None
+            test_points = []
+            if np.any(test_mask):
+                X_test = X_win[test_mask]
+                yrs_t  = target_years[test_mask]
+                y_scaled = model.predict(X_test, verbose=0).ravel()
+                y_unscaled = y_scaler.inverse_transform(y_scaled.reshape(-1,1)).ravel()
+                y_pred = _y_inv(y_unscaled)
+                y_pred = np.maximum(y_pred, 0.0)
+                y_true = merged.set_index("year").loc[yrs_t, "patents"].astype(float).values
+                mspe = _mspe(y_true, y_pred)
+                test_points = [
+                    {"year": int(y), "actual": float(a), "yhat": float(p)}
+                    for y, a, p in zip(yrs_t.tolist(), y_true.tolist(), y_pred.tolist())
+                ]
+
+            # ---- production forecast (recursive) ----
+            last_year_hist = int(merged["year"].iloc[-1])
+            if X_win.shape[0] == 0:
+                return jsonify({"ok": False, "error": "Not enough rows to form a window."}), 400
+            window = X_win[-1]  # (n_steps, n_features)
+            hist_df = merged.loc[:, ["year", "patents", "publications"]].copy()
+            last_pub_unscaled = float(hist_df["publications"].iloc[-1])
+
+            future = []
+            for i in range(horizon):
+                X_input  = window.reshape(1, n_steps, window.shape[1])
+                y_scaled = model.predict(X_input, verbose=0)[0][0]
+                y_unscaled = float(y_scaler.inverse_transform([[y_scaled]])[0, 0])
+                y_pred     = float(_y_inv(y_unscaled))
+                y_pred     = max(0.0, y_pred)
+
+                fut_year = last_year_hist + i + 1
+                future.append({"year": fut_year, "predicted_patents": y_pred})
+
+                hist_df = pd.concat([
+                    hist_df,
+                    pd.DataFrame([{"year": fut_year, "patents": y_pred, "publications": last_pub_unscaled}])
+                ], ignore_index=True)
+
+                df_e2, X_raw2, years2, _ = _build_enhanced(hist_df)
+                X_scaled2 = x_scaler.transform(X_raw2)
+                window = X_scaled2[-n_steps:, :]
+
+            # ======= GROWTH RATES =======
+            current_year = date.today().year
+
+            pats_actual = (
+                pat_counts.rename(columns={"patents":"patent_count"})
+                          .loc[:, ["year","patent_count"]]
+                          .sort_values("year")
+                          .reset_index(drop=True)
+            )
+
+            # 1) Past + current (actual only)
+            past_GR_a, past_s_a, past_e_a, past_lbl_a, curr_GR_a, curr_s_a, curr_e_a, curr_lbl_a = \
+                compute_patent_growth_from_counts(pats_actual)
+
+            # 2) Current recomputed with forecast for [current_year, +1, +2] if available
+            pats_curr_hybrid = pats_actual.copy()
+            future_map = {int(r["year"]): float(r["predicted_patents"]) for r in future}
+            for y in [current_year, current_year+1, current_year+2]:
+                if y in future_map:
+                    pats_curr_hybrid = _upsert_counts(pats_curr_hybrid, y, future_map[y])
+            _, _, _, _, curr_GR_h, curr_s_h, curr_e_h, curr_lbl_h = \
+                compute_patent_growth_from_counts(pats_curr_hybrid)
+
+            # 3) Evaluation: past growth with model values (replace test years by predictions)
+            eval_growth = None
+            if len(test_points) > 0:
+                pats_eval = pats_actual.copy()
+                for tp in test_points:
+                    pats_eval = _upsert_counts(pats_eval, int(tp["year"]), float(tp["yhat"]))
+                past_GR_m, past_s_m, past_e_m, past_lbl_m, _, _, _, _ = \
+                    compute_patent_growth_from_counts(pats_eval)
+
+                eval_growth = {
+                    "past_actual_percent": past_GR_a,
+                    "past_model_percent": past_GR_m,
+                    "delta_percent": (past_GR_m - past_GR_a) if np.isfinite(past_GR_a) and np.isfinite(past_GR_m) else None,
+                    "window": {"start_year": past_s_m, "end_year": past_e_m},
+                    "labels": {"actual": past_lbl_a, "model": past_lbl_m}
+                }
+
+            # ======= HISTORY PAYLOADS (for plotting) =======
+            patents_history = [
+                {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "count": int(r.patents)}
+                for r in pat_counts.itertuples(index=False)
+            ]
+            publications_history = [
+                {"year": int(r.year), "ds": _year_to_ds(int(r.year)), "count": int(r.publications)}
+                for r in pub_counts.itertuples(index=False)
+            ]
+            merged_history = [
+                {
+                    "year": int(r.year),
+                    "ds": _year_to_ds(int(r.year)),
+                    "patents": int(r.patents),
+                    "publications": int(r.publications)
+                }
+                for r in merged.itertuples(index=False)
+            ]
+
+            return jsonify({
+                "ok": True,
+                "params": {
+                    "horizon": horizon,
+                    "split_year": int(split_year) if split_year is not None else None,
+                    "test_years": test_years if split_year is None else None
+                },
+                "applied_truncation": {
+                    "pat_trunc_requested": pat_trunc,
+                    "pub_trunc_requested": pub_trunc,
+                    "pat_trunc_effective": eff_pat_trunc,
+                    "pub_trunc_effective": eff_pub_trunc
+                },
+                "history": {
+                    "patents": patents_history,
+                    "publications": publications_history,
+                    "merged": merged_history,
+                    "years_used_for_model": years_all,
+                    "last_history_year": y_max
+                },
+                "evaluation": {
+                    "test_years": test_years_list if split_year is not None or test_years > 0 else [],
+                    "mspe_percent": mspe,
+                    "points": test_points,
+                    "past_growth_comparison": eval_growth
+                },
+                "growth": {
+                    "past_actual": {
+                        "percent": past_GR_a,
+                        "label": past_lbl_a,
+                        "window": {"start_year": past_s_a, "end_year": past_e_a}
+                    },
+                    "current_actual": {
+                        "percent": curr_GR_a,
+                        "label": curr_lbl_a,
+                        "window": {"start_year": curr_s_a, "end_year": curr_e_a}
+                    },
+                    "current_with_forecast": {
+                        "percent": curr_GR_h,
+                        "label": curr_lbl_h,
+                        "window": {"start_year": curr_s_h, "end_year": curr_e_h},
+                        "note": "current window recomputed with forecast for [current_year, +1, +2] where available"
+                    }
+                },
+                "forecast": future,
+                "start_year": last_year_hist + 1,
+                "forecast_horizon": horizon
+            }), 200
+
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+        
+        
+        
+        
+        
+        
         
         
         

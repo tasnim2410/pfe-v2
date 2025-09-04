@@ -1,7 +1,3 @@
-
-
-
-
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -15,20 +11,34 @@ import {
   CartesianGrid,
   Legend,
   Area,
+  Scatter,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 
 // Types
 type HistoryPoint = { year: number; count: number };
 type ForecastPoint = { year: number; yhat: number; yhat_lower?: number; yhat_upper?: number };
+type TestPoint = { year: number; actual: number; yhat?: number; yhat_with_pub_reg?: number };
+type GrowthWindow = { start_year: number; end_year: number };
+type GrowthData = { 
+  label: string; 
+  percent: number; 
+  window: GrowthWindow;
+};
 
 type ProphetResponse = {
   best_lag: number;
   tech?: string;
   xcorr?: number;
+  growth?: {
+    current: GrowthData;
+    past: GrowthData;
+  };
   metrics: {
     mae_patents_baseline: number;
     rmse_patents_baseline: number;
@@ -36,9 +46,9 @@ type ProphetResponse = {
     rmse_patents_with_reg: number;
     mae_pubs: number;
     rmse_pubs: number;
-    ampe_patents_baseline: number;
-    ampe_patents_with_reg: number;
-    ampe_pubs: number;
+    ampe_patents_baseline?: number;
+    ampe_patents_with_reg?: number;
+    ampe_pubs?: number;
   };
   patents: {
     history: HistoryPoint[];
@@ -46,10 +56,12 @@ type ProphetResponse = {
       baseline: ForecastPoint[];
       with_pub_ar: ForecastPoint[];
     };
+    test?: TestPoint[];
   };
   publications: {
     history: HistoryPoint[];
     forecast: ForecastPoint[];
+    test?: TestPoint[];
   };
 };
 
@@ -57,13 +69,16 @@ type ChartDataPoint = {
   year: number;
   // Patents data
   patents_history?: number;
-  patents_baseline?: number;
-  patents_with_pub_ar?: number;
+  patents_forecast?: number;
+  patents_test_actual?: number;
+  patents_test_pred?: number;
   // Publications data
   pubs_history?: number;
   pubs_forecast?: number;
   pubs_lower?: number;
   pubs_upper?: number;
+  pubs_test_actual?: number;
+  pubs_test_pred?: number;
 };
 
 const CURRENT_YEAR = 2025; // Hardcoded to current year
@@ -76,30 +91,48 @@ export default function ProphetForecast() {
   const [data, setData] = useState<ProphetResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<"patents" | "publications">("patents");
-  const [showBaseline, setShowBaseline] = useState(true);
-  const [showWithReg, setShowWithReg] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [horizon, setHorizon] = useState(7); // Default horizon value
-  const [pubTail, setPubTail] = useState(1); // Default pub_tail value
-  const [patTail, setPatTail] = useState(1); // Default pat_tail value
+  const [horizon, setHorizon] = useState(5);
+  const [pubTail, setPubTail] = useState(1);
+  const [patTail, setPatTail] = useState(3);
+  const [splitYear, setSplitYear] = useState(2021);
+  const [testYears, setTestYears] = useState(1);
+  const [evalStartYear, setEvalStartYear] = useState(2022);
+  const [evalEndYear, setEvalEndYear] = useState(2022);
+  const [requestType, setRequestType] = useState<"split" | "eval">("split");
 
-  // Fetch data from API with all parameters
-  const fetchData = async (horizonValue: number, pubTailValue: number, patTailValue: number) => {
+  // Fetch data from API with parameters
+  const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
       const portRes = await fetch("/backend_port.txt");
       const port = (await portRes.text()).trim();
       const backendUrl = `http://localhost:${port}/api/prophet_forecast`;
+      
+      let requestBody = {};
+      if (requestType === "split") {
+        requestBody = {
+          horizon,
+          pub_tail: pubTail,
+          pat_tail: patTail,
+          split_year: splitYear,
+          test_years: testYears
+        };
+      } else {
+        requestBody = {
+          horizon,
+          pub_tail: pubTail,
+          pat_tail: patTail,
+          eval_start_year: evalStartYear,
+          eval_end_year: evalEndYear
+        };
+      }
+      
       const res = await fetch(backendUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          horizon: horizonValue, 
-          pub_tail: pubTailValue, 
-          pat_tail: patTailValue,
-          test_years: patTailValue
-        }),
+        body: JSON.stringify(requestBody),
       });
       if (!res.ok) {
         const t = await res.text();
@@ -114,101 +147,64 @@ export default function ProphetForecast() {
     }
   };
 
-  // Handle input changes
-  const handleHorizonChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value);
-    if (!isNaN(value) && value > 0 && value <= 20) {
-      setHorizon(value);
-    }
-  };
+  // Fetch data on mount and when parameters change
+  useEffect(() => {
+    fetchData();
+  }, [requestType]);
 
-  const handlePubTailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value);
-    if (!isNaN(value) && value >= 0 && value <= 10) {
-      setPubTail(value);
-    }
-  };
-
-  const handlePatTailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value);
-    if (!isNaN(value) && value >= 0 && value <= 10) {
-      setPatTail(value);
-    }
-  };
-
-  // Handle forecast button click
-  const handleForecast = () => {
-    fetchData(horizon, pubTail, patTail);
-  };
-
-  // Process data for charts - ensure forecast connects to history
+  // Process data for charts
   const { patentsData, publicationsData } = useMemo(() => {
     if (!data) return { patentsData: [], publicationsData: [] };
 
-    // Find the last historical year for patents and publications
-    const lastPatentsHistoryYear = Math.max(...data.patents.history.map(d => d.year));
-    const lastPublicationsHistoryYear = Math.max(...data.publications.history.map(d => d.year));
-
-    // Process patents data - include the last historical point in forecast data
+    // Process patents data
     const patentsHistory = data.patents.history.map(item => ({
       year: item.year,
       patents_history: item.count,
     }));
 
-    // Get the last historical value to connect forecasts
-    const lastPatentsValue = data.patents.history.find(d => d.year === lastPatentsHistoryYear)?.count || 0;
+    // Get last historical values for connection
+    const lastPatentHistYear = Math.max(...data.patents.history.map(d => d.year));
+    const lastPatentHistValue = data.patents.history.find(d => d.year === lastPatentHistYear)?.count ?? 0;
 
-    // Create connection points for seamless transition
-    const patentsForecastBaseline = [
-      // Add connection point at last historical year
-      {
-        year: lastPatentsHistoryYear,
-        patents_baseline: lastPatentsValue,
-      },
-      // Add all forecast points starting from the next year
-      ...data.patents.forecast.baseline
-        .filter(item => item.year > lastPatentsHistoryYear)
-        .map(item => ({
-          year: item.year,
-          patents_baseline: item.yhat,
-        }))
-    ];
-
-    const patentsForecastWithAR = [
-      // Add connection point at last historical year
-      {
-        year: lastPatentsHistoryYear,
-        patents_with_pub_ar: lastPatentsValue,
-      },
-      // Add all forecast points starting from the next year
+    const patentsForecast = [
+      // Add connection point
+      { year: lastPatentHistYear, patents_forecast: lastPatentHistValue },
+      // Add forecast points that come after history
       ...data.patents.forecast.with_pub_ar
-        .filter(item => item.year > lastPatentsHistoryYear)
+        .filter(item => item.year > lastPatentHistYear)
         .map(item => ({
           year: item.year,
-          patents_with_pub_ar: item.yhat,
+          patents_forecast: item.yhat,
         }))
     ];
 
-    // Process publications data - include the last historical point in forecast data
+    const patentsTest = data.patents.test?.map(item => ({
+      year: item.year,
+      patents_test_actual: item.actual,
+      patents_test_pred: item.yhat_with_pub_reg,
+    })) || [];
+
+    // Process publications data
     const pubsHistory = data.publications.history.map(item => ({
       year: item.year,
       pubs_history: item.count,
     }));
 
-    // Get the last historical value to connect forecasts
-    const lastPubsValue = data.publications.history.find(d => d.year === lastPublicationsHistoryYear)?.count || 0;
+    // Get last historical values for connection
+    const lastPubHistYear = Math.max(...data.publications.history.map(d => d.year));
+    const lastPubHistValue = data.publications.history.find(d => d.year === lastPubHistYear)?.count ?? 0;
 
     const pubsForecast = [
-      // Add connection point at last historical year
-      {
-        year: lastPublicationsHistoryYear,
-        pubs_forecast: lastPubsValue,
-        pubs_lower: lastPubsValue,
-        pubs_upper: lastPubsValue,
+      // Add connection point
+      { 
+        year: lastPubHistYear, 
+        pubs_forecast: lastPubHistValue,
+        pubs_lower: lastPubHistValue,
+        pubs_upper: lastPubHistValue
       },
-      // Add all forecast points starting from the next year
+      // Add forecast points that come after history
       ...data.publications.forecast
-        .filter(item => item.year > lastPublicationsHistoryYear)
+        .filter(item => item.year > lastPubHistYear)
         .map(item => ({
           year: item.year,
           pubs_forecast: item.yhat,
@@ -217,13 +213,20 @@ export default function ProphetForecast() {
         }))
     ];
 
+    const pubsTest = data.publications.test?.map(item => ({
+      year: item.year,
+      pubs_test_actual: item.actual,
+      pubs_test_pred: item.yhat,
+    })) || [];
+
     // Combine data
     const allYears = new Set([
       ...patentsHistory.map(d => d.year),
-      ...patentsForecastBaseline.map(d => d.year),
-      ...patentsForecastWithAR.map(d => d.year),
+      ...patentsForecast.map(d => d.year),
+      ...patentsTest.map(d => d.year),
       ...pubsHistory.map(d => d.year),
       ...pubsForecast.map(d => d.year),
+      ...pubsTest.map(d => d.year),
     ]);
 
     const patentsData: ChartDataPoint[] = [];
@@ -233,21 +236,23 @@ export default function ProphetForecast() {
       // Patents data point
       const patentsPoint: ChartDataPoint = { year };
       const historyPt = patentsHistory.find(d => d.year === year);
-      const baselinePt = patentsForecastBaseline.find(d => d.year === year);
-      const withARPt = patentsForecastWithAR.find(d => d.year === year);
+      const forecastPt = patentsForecast.find(d => d.year === year);
+      const testPt = patentsTest.find(d => d.year === year);
 
       if (historyPt) patentsPoint.patents_history = historyPt.patents_history;
-      if (baselinePt) patentsPoint.patents_baseline = baselinePt.patents_baseline;
-      if (withARPt) patentsPoint.patents_with_pub_ar = withARPt.patents_with_pub_ar;
-
-      if (historyPt || baselinePt || withARPt) {
-        patentsData.push(patentsPoint);
+      if (forecastPt) patentsPoint.patents_forecast = forecastPt.patents_forecast;
+      if (testPt) {
+        patentsPoint.patents_test_actual = testPt.patents_test_actual;
+        patentsPoint.patents_test_pred = testPt.patents_test_pred;
       }
+
+      patentsData.push(patentsPoint);
 
       // Publications data point
       const pubsPoint: ChartDataPoint = { year };
       const pubsHistoryPt = pubsHistory.find(d => d.year === year);
       const pubsForecastPt = pubsForecast.find(d => d.year === year);
+      const pubsTestPt = pubsTest.find(d => d.year === year);
 
       if (pubsHistoryPt) pubsPoint.pubs_history = pubsHistoryPt.pubs_history;
       if (pubsForecastPt) {
@@ -255,70 +260,187 @@ export default function ProphetForecast() {
         pubsPoint.pubs_lower = pubsForecastPt.pubs_lower;
         pubsPoint.pubs_upper = pubsForecastPt.pubs_upper;
       }
-
-      if (pubsHistoryPt || pubsForecastPt) {
-        publicationsData.push(pubsPoint);
+      if (pubsTestPt) {
+        pubsPoint.pubs_test_actual = pubsTestPt.pubs_test_actual;
+        pubsPoint.pubs_test_pred = pubsTestPt.pubs_test_pred;
       }
+
+      publicationsData.push(pubsPoint);
     });
 
-    return { patentsData, publicationsData };
+    return { 
+      patentsData: patentsData.sort((a, b) => a.year - b.year), 
+      publicationsData: publicationsData.sort((a, b) => a.year - b.year) 
+    };
   }, [data]);
 
   return (
     <Card className="w-full">
-      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        {/* <CardTitle>Prophet Forecast</CardTitle> */}
+      <CardHeader className="flex flex-col gap-4">
+        <CardTitle>Prophet Forecast</CardTitle>
+        
+        <Tabs value={requestType} onValueChange={(v) => setRequestType(v as "split" | "eval")}>
+          <TabsList>
+            <TabsTrigger value="split">Split Year Configuration</TabsTrigger>
+            <TabsTrigger value="eval">Evaluation Range Configuration</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="split" className="space-y-4 mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="horizon" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Forecast Horizon:
+                </Label>
+                <Input
+                  id="horizon"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={horizon}
+                  onChange={(e) => setHorizon(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="pubTail" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Pub Tail:
+                </Label>
+                <Input
+                  id="pubTail"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={pubTail}
+                  onChange={(e) => setPubTail(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="patTail" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Pat Tail:
+                </Label>
+                <Input
+                  id="patTail"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={patTail}
+                  onChange={(e) => setPatTail(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="splitYear" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Split Year:
+                </Label>
+                <Input
+                  id="splitYear"
+                  type="number"
+                  min="2000"
+                  max="2030"
+                  value={splitYear}
+                  onChange={(e) => setSplitYear(parseInt(e.target.value))}
+                  className="w-20"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="testYears" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Test Years:
+                </Label>
+                <Input
+                  id="testYears"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={testYears}
+                  onChange={(e) => setTestYears(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+            </div>
+          </TabsContent>
+          
+          <TabsContent value="eval" className="space-y-4 mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="horizon2" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Forecast Horizon:
+                </Label>
+                <Input
+                  id="horizon2"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={horizon}
+                  onChange={(e) => setHorizon(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="pubTail2" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Pub Tail:
+                </Label>
+                <Input
+                  id="pubTail2"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={pubTail}
+                  onChange={(e) => setPubTail(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="patTail2" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Pat Tail:
+                </Label>
+                <Input
+                  id="patTail2"
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={patTail}
+                  onChange={(e) => setPatTail(parseInt(e.target.value))}
+                  className="w-16"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="evalStartYear" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Eval Start Year:
+                </Label>
+                <Input
+                  id="evalStartYear"
+                  type="number"
+                  min="2000"
+                  max="2030"
+                  value={evalStartYear}
+                  onChange={(e) => setEvalStartYear(parseInt(e.target.value))}
+                  className="w-20"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="evalEndYear" className="text-sm whitespace-nowrap min-w-[100px]">
+                  Eval End Year:
+                </Label>
+                <Input
+                  id="evalEndYear"
+                  type="number"
+                  min="2000"
+                  max="2030"
+                  value={evalEndYear}
+                  onChange={(e) => setEvalEndYear(parseInt(e.target.value))}
+                  className="w-20"
+                />
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+        
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Label htmlFor="horizon" className="text-sm whitespace-nowrap">
-              Forecast Horizon:
-            </Label>
-            <Input
-              id="horizon"
-              type="number"
-              min="1"
-              max="20"
-              value={horizon}
-              onChange={handleHorizonChange}
-              className="w-16"
-            />
-            <span className="text-sm whitespace-nowrap">years</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="pub-tail" className="text-sm whitespace-nowrap">
-              Pub Tail:
-            </Label>
-            <Input
-              id="pub-tail"
-              type="number"
-              min="0"
-              max="10"
-              value={pubTail}
-              onChange={handlePubTailChange}
-              className="w-16"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="pat-tail" className="text-sm whitespace-nowrap">
-              Pat Tail:
-            </Label>
-            <Input
-              id="pat-tail"
-              type="number"
-              min="0"
-              max="10"
-              value={patTail}
-              onChange={handlePatTailChange}
-              className="w-16"
-            />
-          </div>
-          <Button 
-            onClick={handleForecast} 
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            {loading ? "Loading..." : "Generate Forecast"}
+          <Button onClick={fetchData} disabled={loading}>
+            {loading ? "Loading..." : "Run Forecast"}
           </Button>
+          
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant={tab === "patents" ? "default" : "outline"}
@@ -332,34 +454,68 @@ export default function ProphetForecast() {
             >
               Publications
             </Button>
-            {tab === "patents" && (
-              <div className="flex items-center gap-3 pl-2">
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={showBaseline}
-                    onChange={(e) => setShowBaseline(e.target.checked)}
-                  />
-                  Baseline
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={showWithReg}
-                    onChange={(e) => setShowWithReg(e.target.checked)}
-                  />
-                  With pubs AR
-                </label>
-              </div>
-            )}
           </div>
         </div>
       </CardHeader>
+      
       <CardContent className="space-y-4">
         {loading && <div className="text-sm text-gray-500">Loading forecast…</div>}
         {error && <div className="text-sm text-red-600">Error: {error}</div>}
+        
         {!loading && !error && data && (
           <>
+            {/* Growth Rate Comparison */}
+            {data.growth && (
+              <div className="p-4 bg-blue-50 rounded-lg">
+                <h3 className="font-semibold text-lg mb-2">Growth Rate Comparison</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Past Growth</h4>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Period:</span>
+                      <Badge variant="outline">
+                        {data.growth.past.window.start_year} - {data.growth.past.window.end_year}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Trend:</span>
+                      <Badge variant={data.growth.past.label === "Rapid" ? "default" : "secondary"}>
+                        {data.growth.past.label}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Rate:</span>
+                      <span className="font-semibold text-blue-700">
+                        {data.growth.past.percent.toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Forecasted Growth</h4>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Period:</span>
+                      <Badge variant="outline">
+                        {data.growth.current.window.start_year} - {data.growth.current.window.end_year}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Trend:</span>
+                      <Badge variant={data.growth.current.label === "Rapid" ? "default" : "secondary"}>
+                        {data.growth.current.label}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm">Rate:</span>
+                      <span className="font-semibold text-green-700">
+                        {data.growth.current.percent.toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {tab === "patents" ? (
               <div className="w-full h-[380px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -372,6 +528,8 @@ export default function ProphetForecast() {
                       labelFormatter={(label) => `Year: ${label}`}
                     />
                     <Legend />
+                    
+                    {/* History */}
                     <Line
                       name="Patents (history)"
                       type="monotone"
@@ -381,28 +539,35 @@ export default function ProphetForecast() {
                       strokeWidth={2}
                       isAnimationActive={false}
                     />
-                    {showBaseline && (
-                      <Line
-                        name="Patents (baseline)"
-                        type="monotone"
-                        dataKey="patents_baseline"
-                        dot={false}
-                        stroke="#2563eb"
-                        strokeWidth={2}
-                        isAnimationActive={false}
-                      />
-                    )}
-                    {showWithReg && (
-                      <Line
-                        name="Patents (with pubs AR)"
-                        type="monotone"
-                        dataKey="patents_with_pub_ar"
-                        dot={false}
-                        stroke="#f59e0b"
-                        strokeWidth={2}
-                        isAnimationActive={false}
-                      />
-                    )}
+                    
+                    {/* Forecast */}
+                    <Line
+                      name="Patents (forecast)"
+                      type="monotone"
+                      dataKey="patents_forecast"
+                      dot={false}
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      isAnimationActive={false}
+                    />
+                    
+                    {/* Test actual values */}
+                    <Scatter
+                      name="Test (actual)"
+                      dataKey="patents_test_actual"
+                      fill="#ef4444"
+                      stroke="#ef4444"
+                      strokeWidth={2}
+                    />
+                    
+                    {/* Test predictions */}
+                    <Scatter
+                      name="Test (predicted)"
+                      dataKey="patents_test_pred"
+                      fill="#3b82f6"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -418,6 +583,8 @@ export default function ProphetForecast() {
                       labelFormatter={(label) => `Year: ${label}`}
                     />
                     <Legend />
+                    
+                    {/* History */}
                     <Line
                       name="Publications (history)"
                       type="monotone"
@@ -427,6 +594,8 @@ export default function ProphetForecast() {
                       strokeWidth={2}
                       isAnimationActive={false}
                     />
+                    
+                    {/* Confidence interval */}
                     <Area
                       name="Forecast interval"
                       type="monotone"
@@ -446,6 +615,8 @@ export default function ProphetForecast() {
                       activeDot={false}
                       isAnimationActive={false}
                     />
+                    
+                    {/* Forecast */}
                     <Line
                       name="Publications (forecast)"
                       type="monotone"
@@ -455,85 +626,90 @@ export default function ProphetForecast() {
                       strokeWidth={2}
                       isAnimationActive={false}
                     />
+                    
+                    {/* Test actual values */}
+                    <Scatter
+                      name="Test (actual)"
+                      dataKey="pubs_test_actual"
+                      fill="#ef4444"
+                      stroke="#ef4444"
+                      strokeWidth={2}
+                    />
+                    
+                    {/* Test predictions */}
+                    <Scatter
+                      name="Test (predicted)"
+                      dataKey="pubs_test_pred"
+                      fill="#3b82f6"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
+            
             <div className="mt-2 text-sm text-gray-800 grid sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <div className="font-semibold">Patents Metrics</div>
-                <div className="space-y-1">
-                  <div>
-                    <span className="font-medium">Baseline:</span>
-                  </div>
-                  <div className="pl-2 space-y-0.5">
-                    <div>
-                      MAE / RMSE:&nbsp;
-                      <span className="tabular-nums">
-                        {data.metrics.mae_patents_baseline.toFixed(2)} /{" "}
-                        {data.metrics.rmse_patents_baseline.toFixed(2)}
-                      </span>
-                    </div>
-                    <div>
-                      AMPE:&nbsp;
-                      <span className="tabular-nums">
-                        {data.metrics.ampe_patents_baseline.toFixed(2)}%
-                      </span>
-                    </div>
-                  </div>
+                <div>
+                  MAE With pubs AR:&nbsp;
+                  <span className="tabular-nums">
+                    {data.metrics.mae_patents_with_reg.toFixed(2)}
+                  </span>
                 </div>
-                <div className="space-y-1">
-                  <div>
-                    <span className="font-medium">With pubs AR:</span>
-                  </div>
-                  <div className="pl-2 space-y-0.5">
-                    <div>
-                      MAE / RMSE:&nbsp;
-                      <span className="tabular-nums">
-                        {data.metrics.mae_patents_with_reg.toFixed(2)} /{" "}
-                        {data.metrics.rmse_patents_with_reg.toFixed(2)}
-                      </span>
-                    </div>
-                    <div>
-                      AMPE:&nbsp;
-                      <span className="tabular-nums">
-                        {data.metrics.ampe_patents_with_reg.toFixed(2)}%
-                      </span>
-                    </div>
-                  </div>
+                <div>
+                  RMSE With pubs AR:&nbsp;
+                  <span className="tabular-nums">
+                    {data.metrics.rmse_patents_with_reg.toFixed(2)}
+                  </span>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <div className="font-semibold">Publications Metrics</div>
-                <div className="space-y-0.5">
+                {data.metrics.ampe_patents_with_reg && (
                   <div>
-                    MAE / RMSE:&nbsp;
+                    AMPE With pubs AR:&nbsp;
                     <span className="tabular-nums">
-                      {data.metrics.mae_pubs.toFixed(2)} / {data.metrics.rmse_pubs.toFixed(2)}
+                      {data.metrics.ampe_patents_with_reg.toFixed(2)}
                     </span>
                   </div>
+                )}
+              </div>
+              
+              <div className="space-y-1">
+                <div className="font-semibold">Publications Metrics</div>
+                <div>
+                  MAE:&nbsp;
+                  <span className="tabular-nums">
+                    {data.metrics.mae_pubs.toFixed(2)}
+                  </span>
+                </div>
+                <div>
+                  RMSE:&nbsp;
+                  <span className="tabular-nums">
+                    {data.metrics.rmse_pubs.toFixed(2)}
+                  </span>
+                </div>
+                {data.metrics.ampe_pubs && (
                   <div>
                     AMPE:&nbsp;
                     <span className="tabular-nums">
-                      {data.metrics.ampe_pubs.toFixed(2)}%
+                      {data.metrics.ampe_pubs.toFixed(2)}
                     </span>
                   </div>
-                </div>
+                )}
                 {typeof data.xcorr === "number" && (
-                  <div className="mt-2 pt-2 border-t border-gray-200">
-                    <div>
-                      Corr(pubs→patents): <span className="tabular-nums">{data.xcorr.toFixed(3)}</span>
-                      {typeof data.best_lag === "number" && (
-                        <> &nbsp;• Best lag: <span className="tabular-nums">{data.best_lag}</span> years</>
-                      )}
-                    </div>
+                  <div>
+                    Corr(pubs→patents): <span className="tabular-nums">{data.xcorr.toFixed(3)}</span>
+                    {typeof data.best_lag === "number" && (
+                      <> &nbsp;• Best lag: <span className="tabular-nums">{data.best_lag}</span> years</>
+                    )}
                   </div>
                 )}
               </div>
             </div>
+            
             <div className="text-xs text-gray-500">
-              Note: Forecast lines are connected to historical data for a continuous visualization.
-              Forecasting {horizon} years ahead.
+              Note: Black line shows historical values, green line shows forecasts, 
+              red dots show actual test values, and blue dots show predicted test values.
             </div>
           </>
         )}

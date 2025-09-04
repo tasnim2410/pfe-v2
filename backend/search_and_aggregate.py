@@ -33,10 +33,29 @@ import pandas as pd
 # ------------------------ Config ------------------------
 
 SEARCH_TERMS = [
+    # Computing Infrastructure Technologies (similar domain)
     "Edge Computing",
-    "Supply Chain",
-    "Online Learning",
-    "Optical Character Recognition",
+    "Cloud Computing", 
+    "Distributed Computing",
+    "Grid Computing",
+    
+    # Data Processing Technologies (similar domain)
+    "Data Mining",
+    "Data Analytics",
+    "Big Data Processing",
+    "Stream Processing",
+    
+    # Machine Learning Technologies (similar domain)
+    "Deep Learning",
+    "Neural Networks",
+    "Computer Vision",
+    "Natural Language Processing",
+    
+    # IoT and Sensor Technologies (similar domain)
+    "Internet of Things",
+    "Wireless Sensor Networks",
+    "Smart Sensors",
+    "Embedded Systems"
 ]
 
 DEFAULT_OUTDIR = os.path.join(os.getcwd(), "outputs")

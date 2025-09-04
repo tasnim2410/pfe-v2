@@ -1,0 +1,32 @@
+pat1; Edge Computing
+pat2; Cloud Computing
+pat3; Distributed Computing
+pat4; Grid Computing
+pat5; Data Mining
+pat6; Data Analytics
+pat7; Big Data Processing
+pat8; Stream Processing
+pat9; Deep Learning
+pat10; Neural Networks
+pat11; Computer Vision
+pat12; Natural Language Processing
+pat13; Internet of Things
+pat14; Wireless Sensor Networks
+pat15; Smart Sensors
+pat16; Embedded Systems
+pub1; Edge Computing
+pub2; Cloud Computing
+pub3; Distributed Computing
+pub4; Grid Computing
+pub5; Data Mining
+pub6; Data Analytics
+pub7; Big Data Processing
+pub8; Stream Processing
+pub9; Deep Learning
+pub10; Neural Networks
+pub11; Computer Vision
+pub12; Natural Language Processing
+pub13; Internet of Things
+pub14; Wireless Sensor Networks
+pub15; Smart Sensors
+pub16; Embedded Systems
