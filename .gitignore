@@ -1,3 +1,13 @@
 __pycache__/
 *.pyc
-venv/**/__pycache__/
+venv/**/__pycache__/venv/
+.venv/
+rpy2_env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.egg-info/
+.env
