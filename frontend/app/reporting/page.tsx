@@ -1,36 +1,659 @@
 
 
 
+// /* app/reporting/page.tsx */
+// "use client"
+
+// import { useState, useEffect } from "react"
+// import { DndContext, DragEndEvent, closestCenter } from "@dnd-kit/core"
+// import { arrayMove, SortableContext, useSortable } from "@dnd-kit/sortable"
+// import { CSS } from "@dnd-kit/utilities"
+// import html2canvas from "html2canvas"
+// import { 
+//   Download, Eye, FileText, Presentation, 
+//   LayoutGrid, Lock, Unlock, Plus, Trash 
+// } from "lucide-react"
+// import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+// import { Checkbox } from "@/components/ui/checkbox";
+// import { Textarea } from "@/components/ui/textarea";
+// import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+// import { Button } from '@/components/ui/button'
+// import { useChartContext } from "../providers/ChartContext"
+
+// // Function to render the appropriate chart based on chartId
+// const renderChart = (chartId: string) => {
+//   switch (chartId) {
+//     case 'publication-trends':
+//       return <PublicationTrends />;
+//     case 'evolving-word-cloud':
+//       return <EvolvingWordCloud />;
+//     case 'applicant-type-pie':
+//       return <ApplicantTypePie />;
+//     case 'ip-stats':
+//       return <IpStatsBox />;
+//     case 'top-10-applicants':
+//       return <Top10Applicants />;
+//     case 'top-ipc-codes':
+//       return <TopIPCCodes />;
+//     case 'top-keywords':
+//       return <TopKeywords />;
+//     case 'patent-field-trends':
+//       return <PatentFieldTrends />;
+//     case 'cooccurrence-trends':
+//       return <CooccurrenceTrends />;
+//     default:
+//       return <div className="text-red-500">Chart not found</div>;
+//   }
+// };
+// import PublicationTrends from "@/components/publication_trends"; // <-- ADDED
+// import EvolvingWordCloud from "@/components/evolving_word_cloud";
+// import ApplicantTypePie from "@/components/applicant_type_pie";
+// import IpStatsBox from "@/components/IPStat";
+// import Top10Applicants from "@/components/top_10_app";
+// import { TopIPCCodes } from "@/components/top_ipc_codes";
+// import TopKeywords from "@/components/top_10_keywords";
+// import PatentFieldTrends from "@/components/patent_by_field";
+// import CooccurrenceTrends from "@/components/co-occurunece_trend";
+// import ApplicantCollaborationNetwork from "@/components/collaboration_network";
+// import OriginalityRate from "@/components/originality_rate";
+// import FamilyMemberCountChart from "@/components/family-member-count";
+// import FamilySizeDistributionChart from "@/components/family-size-distribution";
+// import InternationalProtectionMatrixChart from "@/components/international-protection-matrix";
+// import InternationalPatentFlowChart from "@/components/international-patent-flow";
+// import GeographicalDistribution from "@/components/geographical_distribution";  
+// import jsPDF from "jspdf";
+
+// import PptxGenJS from 'pptxgenjs';
+
+// // Chart palette definitions for reporting
+// const availableCharts = [
+//   { id: "publication-trend", title: "Publication Trend", type: "line" },
+//   { id: "applicant-analysis", title: "Applicant Type Analysis", type: "pie" },
+//   { id: "top-ipc", title: "Top IPC Codes", type: "bar" },
+//   { id: "top-10-applicants", title: "Top 10 Applicants", type: "bar" },
+//   { id: "top-10-keywords", title: "Top 10 Keywords", type: "bar" },
+//   { id: "patent-field-trends", title: "Patent Field Trends", type: "line" },
+//   { id: "evolving-word-cloud", title: "Evolving Word Cloud", type: "wordcloud" },
+//   { id: "family-member-count", title: "Family Member Count", type: "bar" },
+//   { id: "family-size-distribution", title: "Family Size Distribution", type: "histogram" },
+//   { id: "international-protection-matrix", title: "International Protection Matrix", type: "matrix" },
+//   { id: "international-patent-flow", title: "International Patent Flow", type: "flow" },
+//   { id: "geographic-distribution", title: "Geographic Distribution", type: "map" },
+//   // Add more as needed
+// ];
+
+// // Define template types
+// type Template = {
+//   id: string
+//   name: string
+//   dimensions: { width: number; height: number }
+//   slots: Slot[]
+// }
+
+// type Slot = {
+//   id: string
+//   chartId: string | null
+//   comment: string
+//   width?: number
+//   height?: number
+//   x?: number
+//   y?: number
+// }
+
+// // ChartId type alias
+// type ChartId = string;
+
+// // Predefined templates
+// const TEMPLATES: Template[] = [
+//   {
+//     id: "executive-pdf",
+//     name: "A4 Executive PDF",
+//     dimensions: { width: 595, height: 842 }, // A4 in points (pt)
+//     slots: [
+//       { id: "s1", chartId: null, comment: "", x: 40, y: 40, width: 515, height: 200 },
+//       { id: "s2", chartId: null, comment: "", x: 40, y: 260, width: 250, height: 200 },
+//       { id: "s3", chartId: null, comment: "", x: 305, y: 260, width: 250, height: 200 },
+//       { id: "s4", chartId: null, comment: "", x: 40, y: 480, width: 515, height: 300 },
+//     ]
+//   },
+//   {
+//     id: "landscape-pdf",
+//     name: "A4 Landscape PDF",
+//     dimensions: { width: 842, height: 595 }, 
+//     slots: [
+//       { id: "s1", chartId: null, comment: "", x: 40, y: 40, width: 762, height: 200 },
+//       { id: "s2", chartId: null, comment: "", x: 40, y: 260, width: 380, height: 295 },
+//       { id: "s3", chartId: null, comment: "", x: 440, y: 260, width: 380, height: 295 },
+//     ]
+//   },
+//   {
+//     id: "ppt-deck",
+//     name: "16×9 PPT Deck",
+//     dimensions: { width: 1280, height: 720 }, 
+//     slots: [
+//       { id: "s1", chartId: null, comment: "", x: 40, y: 40, width: 1200, height: 640 },
+//     ]
+//   }
+// ]
+
+
+
+// export default function Reporting() {
+//   const { selectedCharts, setSelectedCharts, chartComments, setChartComments } = useChartContext()
+//   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
+//   const [layout, setLayout] = useState<Slot[]>([])
+//   const [isLayoutUnlocked, setIsLayoutUnlocked] = useState(false)
+//   const [activeId, setActiveId] = useState<string | null>(null)
+
+//   // Initialize layout when template is selected
+//   useEffect(() => {
+//     if (selectedTemplate) {
+//       setLayout([...selectedTemplate.slots])
+//     }
+//   }, [selectedTemplate])
+
+//   // Handle drag end events
+//   const handleDragEnd = (event: DragEndEvent) => {
+//     const { active, over } = event
+    
+//     if (over?.id && active.id !== over.id) {
+//       const activeChartId = active.id.toString()
+//       const slotId = over.id.toString()
+      
+//       setLayout(prev => prev.map(slot => 
+//         slot.id === slotId ? { ...slot, chartId: activeChartId } : slot
+//       ))
+//     }
+    
+//     setActiveId(null)
+//   }
+
+//   // Add new slot in custom layout mode
+//   const addNewSlot = () => {
+//     const newSlot: Slot = {
+//       id: `slot-${Date.now()}`,
+//       chartId: null,
+//       comment: "",
+//       x: 50,
+//       y: 50,
+//       width: 200,
+//       height: 150
+//     }
+//     setLayout([...layout, newSlot])
+//   }
+
+//   // Remove a slot
+//   const removeSlot = (slotId: string) => {
+//     setLayout(layout.filter(slot => slot.id !== slotId))
+//   }
+
+//   // Update slot comment
+//   const updateSlotComment = (slotId: string, comment: string) => {
+//     setLayout(prev => 
+//       prev.map(slot => 
+//         slot.id === slotId ? { ...slot, comment } : slot
+//       )
+//     )
+//   }
+
+//   // Toggle chart selection
+//   const toggleChart = (id: ChartId) => {
+//     setSelectedCharts(prev =>
+//       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+//     )
+//   }
+
+//   // Export report as PDF
+// const generatePdf = async () => {
+//   if (!selectedTemplate) return;
+//   const previewNode = document.querySelector('.relative.mx-auto.bg-white.border');
+//   if (!previewNode) return;
+
+//   const canvas = await html2canvas(previewNode as HTMLElement, { scale: 2 });
+//   const imgData = canvas.toDataURL('image/png');
+//   const pdf = new jsPDF({
+//     orientation:
+//       selectedTemplate.dimensions.width > selectedTemplate.dimensions.height
+//         ? 'landscape'
+//         : 'portrait',
+//     unit: 'pt',
+//     format: [selectedTemplate.dimensions.width, selectedTemplate.dimensions.height],
+//   });
+
+//   pdf.addImage(
+//     imgData,
+//     'PNG',
+//     0,
+//     0,
+//     selectedTemplate.dimensions.width,
+//     selectedTemplate.dimensions.height
+//   );
+//   pdf.save(`${selectedTemplate.name}.pdf`);
+// };
+
+// // Export report as PowerPoint
+// // ─── Replace your old generatePptx with this ─────────────────────────────────
+
+// const generatePptx = async () => {
+//   // 1. Grab all rendered charts
+//   const divs = Array.from(
+//     document.querySelectorAll<HTMLDivElement>('[id^="chart-"]')
+//   );
+//   if (!divs.length) {
+//     return alert("No charts to export.");
+//   }
+
+//   // 2. Screenshot each one
+//   const images = await Promise.all(
+//     divs.map(async (d) => ({
+//       // strip off the "chart-" prefix so your backend can key off the raw id
+//       id: d.id.replace(/^chart-/, ""),
+//       data: (await html2canvas(d)).toDataURL("image/png"),
+//     }))
+//   );
+
+//   try {
+//     // 3. Find the port your local service is running on
+//     const port = (await (await fetch("/backend_port.txt")).text()).trim();
+
+//     // 4. POST images + comments to your API
+//     const res = await fetch(`http://localhost:${port}/api/report/generate-pptx`, {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify({ images, comments: chartComments }),
+//     });
+
+//     if (!res.ok) {
+//       throw new Error(await res.text());
+//     }
+
+//     // 5. Download the blob as a .pptx
+//     const blob = await res.blob();
+//     const url = URL.createObjectURL(blob);
+//     const a = document.createElement("a");
+//     a.href = url;
+//     a.download = "charts-report.pptx";
+//     a.click();
+//   } catch (e) {
+//     console.error(e);
+//     alert("Export failed: " + e);
+//   }
+// };
+
+
+//   // Sortable slot component
+//   const SortableSlot = ({ slot }: { slot: Slot }) => {
+//     const { 
+//       attributes, 
+//       listeners, 
+//       setNodeRef, 
+//       transform, 
+//       transition 
+//     } = useSortable({ id: slot.id })
+    
+//     const style = {
+//       transform: CSS.Transform.toString(transform),
+//       transition,
+//     }
+
+//     const renderChart = (chartId: string | null, width?: number, height?: number) => {
+//   if (!chartId) return null;
+//   switch (chartId) {
+//     case "publication-trend":
+//       return <PublicationTrends />;
+//     case "applicant-analysis":
+//       return (
+//         <div className="w-full flex justify-center items-center">
+//           <ApplicantTypePie />
+//         </div>
+//       );
+//     case "top-ipc":
+//       return <TopIPCCodes />;
+//     case "top-10-applicants":
+//       return <Top10Applicants />;
+//     case "top-10-keywords":
+//       return <TopKeywords />;
+//     case "patent-field-trends":
+//       return <PatentFieldTrends />;
+//     case "evolving-word-cloud":
+//       return <EvolvingWordCloud />;
+//     case "cooccurrence-trends":
+//       return <CooccurrenceTrends />;
+//     case "applicant-collaboration-network":
+//       return <ApplicantCollaborationNetwork />;
+//     case "family-member-count":
+//       return <FamilyMemberCountChart />;
+//     case "family-size-distribution":  
+//       return <FamilySizeDistributionChart />;
+//     case "international-protection-matrix":
+//       return <InternationalProtectionMatrixChart />;
+//     case "international-patent-flow":
+//       return <InternationalPatentFlowChart />;
+//     case "geographic-distribution":
+//       return <GeographicalDistribution />;
+//     // Add additional chart mappings as needed
+//     default:
+//       return (
+//         <div className="flex items-center justify-center h-64">
+//           <p className="text-gray-500">Chart data for {chartId}</p>
+//         </div>
+//       );
+//   }
+// };
+
+
+//     return (
+//       <div
+//         ref={setNodeRef}
+//         style={style}
+//         className={`relative border rounded p-2 bg-white ${
+//           slot.chartId ? "" : "bg-gray-100 border-dashed"
+//         }`}
+//       >
+//         {isLayoutUnlocked && (
+//           <div className="absolute top-1 right-1 flex gap-1 z-10">
+//             <button 
+//               onClick={() => removeSlot(slot.id)}
+//               className="p-1 bg-red-500 text-white rounded-full"
+//             >
+//               <Trash size={14} />
+//             </button>
+//             <button 
+//               {...attributes}
+//               {...listeners}
+//               className="p-1 bg-gray-800 text-white rounded-full cursor-move"
+//             >
+//               <LayoutGrid size={14} />
+//             </button>
+//           </div>
+//         )}
+        
+//         {slot.chartId ? (
+//           <div className="h-full">
+//             {slot.chartId ? (
+//   <>
+//     {renderChart(slot.chartId, slot.width, slot.height)}
+//     <Textarea
+//       placeholder="Add comment"
+//       value={slot.comment}
+//       onChange={(e) => updateSlotComment(slot.id, e.target.value)}
+//       className="mt-2 w-full text-xs"
+//     />
+//   </>
+// ) : (
+//   <div className="bg-red-100 border border-red-300 p-4 text-red-700">
+//     Data unavailable
+//   </div>
+// )}
+//           </div>
+//         ) : (
+//           <div className="flex items-center justify-center h-full text-gray-400">
+//             Drop chart here
+//           </div>
+//         )}
+//       </div>
+//     )
+//   }
+
+//   // Template selector modal
+//   if (!selectedTemplate) {
+//     return (
+//       <div className="container mx-auto p-6">
+//         <Card>
+//           <CardHeader>
+//             <CardTitle>Choose Report Template</CardTitle>
+//           </CardHeader>
+//           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+//             {TEMPLATES.map(template => (
+//               <div 
+//                 key={template.id}
+//                 className="border rounded-lg p-4 cursor-pointer hover:bg-gray-50"
+//                 onClick={() => setSelectedTemplate(template)}
+//               >
+//                 <div className="text-lg font-medium">{template.name}</div>
+//                 <div className="text-sm text-gray-500 mt-2">
+//                   {template.dimensions.width} × {template.dimensions.height} pt
+//                 </div>
+//                 <div className="mt-4 flex justify-center">
+//                   <div 
+//                     className="relative bg-gray-100 border"
+//                     style={{ 
+//                       width: template.dimensions.width / 4, 
+//                       height: template.dimensions.height / 4 
+//                     }}
+//                   >
+//                     {template.slots.map(slot => (
+//                       <div
+//                         key={slot.id}
+//                         className="absolute border border-dashed border-gray-400 bg-gray-50 bg-opacity-50"
+//                         style={{
+//                           left: slot.x! / 4,
+//                           top: slot.y! / 4,
+//                           width: slot.width! / 4,
+//                           height: slot.height! / 4
+//                         }}
+//                       />
+//                     ))}
+//                   </div>
+//                 </div>
+//               </div>
+//             ))}
+//           </CardContent>
+//         </Card>
+//       </div>
+//     )
+//   }
+
+//   // Calculate preview scale (70% of original)
+//   const previewScale = 0.7
+//   const previewWidth = selectedTemplate.dimensions.width * previewScale
+//   const previewHeight = selectedTemplate.dimensions.height * previewScale
+
+//   return (
+//     <div className="container mx-auto p-6">
+//       <div className="flex justify-between items-center mb-6">
+//         <h1 className="text-2xl font-bold">
+//           {selectedTemplate.name} Report
+//         </h1>
+//         <div className="flex gap-2">
+//           <Button
+//             variant={isLayoutUnlocked ? "default" : "outline"}
+//             onClick={() => setIsLayoutUnlocked(!isLayoutUnlocked)}
+//           >
+//             {isLayoutUnlocked ? <><Unlock size={16} className="mr-2" /> Lock Layout</> : 
+//                                 <><Lock size={16} className="mr-2" /> Unlock Layout</>}
+//           </Button>
+//           {isLayoutUnlocked && (
+//             <Button onClick={addNewSlot}>
+//               <Plus size={16} className="mr-2" /> Add Slot
+//             </Button>
+//           )}
+//         </div>
+//       </div>
+
+//       <div className="flex gap-6">
+//         {/* Chart Palette */}
+//         <div className="w-1/4">
+//           <Card>
+//             <CardHeader>
+//               <CardTitle>Charts</CardTitle>
+//             </CardHeader>
+//             <CardContent className="space-y-3">
+//               {availableCharts.map(({ id, title, type }) => (
+//                 <div 
+//                   key={id}
+//                   className="flex items-center p-3 border rounded hover:bg-gray-50 cursor-move"
+//                   draggable
+//                   onDragStart={(e) => {
+//                     e.dataTransfer.setData("chartId", id)
+//                     setActiveId(id)
+//                   }}
+//                 >
+//                   <Checkbox
+//                     id={id}
+//                     checked={selectedCharts.includes(id)}
+//                     onCheckedChange={() => toggleChart(id)}
+//                     className="mr-3"
+//                   />
+//                   <label htmlFor={id} className="flex-1 font-medium">
+//                     {title} <span className="text-gray-500 text-sm">({type})</span>
+//                   </label>
+//                 </div>
+//               ))}
+//             </CardContent>
+//           </Card>
+//         </div>
+
+//         {/* Template Preview */}
+//         <div className="flex-1">
+//   <Card>
+//     <CardHeader>
+//       <CardTitle>Report Preview</CardTitle>
+//     </CardHeader>
+//     <CardContent>
+//       <div 
+//         className="relative mx-auto bg-white border"
+//         style={{
+//           width: previewWidth,
+//           height: previewHeight,
+//           maxWidth: "100%",
+//           position: "relative"
+//         }}
+//       >
+//         {layout.map(slot => (
+//           <div
+//             key={slot.id}
+//             id={"chart-" + slot.chartId}
+//             className="absolute border border-gray-300 bg-white shadow rounded overflow-hidden"
+//             style={{
+//               left: slot.x! * previewScale,
+//               top: slot.y! * previewScale,
+//               width: slot.width! * previewScale,
+//               height: slot.height! * previewScale,
+//               display: "flex",
+//               flexDirection: "column"
+//             }}
+//           >
+//             {isLayoutUnlocked && (
+//               <div className="absolute top-1 right-1 z-10 flex gap-1">
+//                 <button
+//                   onClick={() => removeSlot(slot.id)}
+//                   className="bg-red-500 text-white p-1 rounded-full"
+//                 >
+//                   <Trash size={14} />
+//                 </button>
+//               </div>
+//             )}
+//             {slot.chartId ? (
+//               <div className="flex-1 overflow-auto">
+//                 {renderChart(slot.chartId)}
+//               </div>
+//             ) : (
+//               <div className="flex-1 flex items-center justify-center text-gray-400">
+//                 Drop chart here
+//               </div>
+//             )}
+//             <Textarea
+//               placeholder="Add comment"
+//               value={slot.comment}
+//               onChange={(e) => updateSlotComment(slot.id, e.target.value)}
+//               className="text-xs border-t mt-auto"
+//             />
+//           </div>
+//         ))}
+//       </div>
+//     </CardContent>
+//   </Card>
+// </div>
+//       </div>
+//     </div>
+//   )
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* app/reporting/page.tsx */
 "use client"
 
-import { useState, useEffect, useRef, memo } from "react"
-import { Trash, Plus, Lock, Unlock, Download, MessageCircle, FilePlus2, File } from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Textarea } from "@/components/ui/textarea"
-import { Button } from "@/components/ui/button"
-import { useChartContext } from "../providers/ChartContext"
-import PublicationTrends from "@/components/publication_trends"
-import EvolvingWordCloud from "@/components/evolving_word_cloud"
-import ApplicantTypePie from "@/components/applicant_type_pie"
-import Top10Applicants from "@/components/top_10_app"
-import { TopIPCCodes } from "@/components/top_ipc_codes"
-import TopKeywords from "@/components/top_10_keywords"
-import PatentFieldTrends from "@/components/patent_by_field"
-import CooccurrenceTrends from "@/components/co-occurunece_trend"
-import ApplicantCollaborationNetwork from "@/components/collaboration_network"
-import FamilyMemberCountChart from "@/components/family-member-count"
-import FamilySizeDistributionChart from "@/components/family-size-distribution"
-import InternationalProtectionMatrixChart from "@/components/international-protection-matrix"
-import InternationalPatentFlowChart from "@/components/international-patent-flow"
-import GeographicalDistribution from "@/components/geographical_distribution"
-import jsPDF from "jspdf"
+import { useState, useEffect } from "react"
+import { DndContext, DragEndEvent, closestCenter } from "@dnd-kit/core"
+import { arrayMove, SortableContext, useSortable } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import html2canvas from "html2canvas"
-import PptxGenJS from "pptxgenjs"
+import { 
+  Download, Eye, FileText, Presentation, 
+  LayoutGrid, Lock, Unlock, Plus, Trash 
+} from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import { Button } from '@/components/ui/button'
+import { useChartContext } from "../providers/ChartContext"
+import PublicationTrends from "@/components/publication_trends"; // <-- ADDED
+import EvolvingWordCloud from "@/components/evolving_word_cloud";
+import ApplicantTypePie from "@/components/applicant_type_pie";
+import IpStatsBox from "@/components/IPStat";
+import Top10Applicants from "@/components/top_10_app";
+import { TopIPCCodes } from "@/components/top_ipc_codes";
+import TopKeywords from "@/components/top_10_keywords";
+import PatentFieldTrends from "@/components/patent_by_field";
+import CooccurrenceTrends from "@/components/co-occurunece_trend";
+import ApplicantCollaborationNetwork from "@/components/collaboration_network";
+import OriginalityRate from "@/components/originality_rate";
+import FamilyMemberCountChart from "@/components/family-member-count";
+import FamilySizeDistributionChart from "@/components/family-size-distribution";
+import InternationalProtectionMatrixChart from "@/components/international-protection-matrix";
+import InternationalPatentFlowChart from "@/components/international-patent-flow";
+import GeographicalDistribution from "@/components/geographical_distribution";  
+import jsPDF from "jspdf";
 
+import PptxGenJS from 'pptxgenjs';
 
-// Chart palette definitions
+// Chart palette definitions for reporting
 const availableCharts = [
   { id: "publication-trend", title: "Publication Trend", type: "line" },
   { id: "applicant-analysis", title: "Applicant Type Analysis", type: "pie" },
@@ -44,52 +667,41 @@ const availableCharts = [
   { id: "international-protection-matrix", title: "International Protection Matrix", type: "matrix" },
   { id: "international-patent-flow", title: "International Patent Flow", type: "flow" },
   { id: "geographic-distribution", title: "Geographic Distribution", type: "map" },
-]
+  // Add more as needed
+];
 
+// Define template types
 type Template = {
   id: string
   name: string
   dimensions: { width: number; height: number }
   slots: Slot[]
 }
+
 type Slot = {
   id: string
   chartId: string | null
-  x: number
-  y: number
-  width: number
-  height: number
-}
-type StickyComment = {
-  id: string
-  text: string
-  x: number
-  y: number
-  width: number
-  height: number
-  fontSize: number
-  bold: boolean
-  italic: boolean
-  underline: boolean
-  color: string
-}
-type Page = {
-  id: string
-  name: string
-  layout: Slot[]
-  comments: StickyComment[]
+  comment: string
+  width?: number
+  height?: number
+  x?: number
+  y?: number
 }
 
+// ChartId type alias
+type ChartId = string;
+
+// Predefined templates
 const TEMPLATES: Template[] = [
   {
     id: "executive-pdf",
     name: "A4 Executive PDF",
-    dimensions: { width: 595, height: 842 },
+    dimensions: { width: 595, height: 842 }, // A4 in points (pt)
     slots: [
-      { id: "s1", chartId: null, x: 40, y: 40, width: 515, height: 200 },
-      { id: "s2", chartId: null, x: 40, y: 260, width: 250, height: 200 },
-      { id: "s3", chartId: null, x: 305, y: 260, width: 250, height: 200 },
-      { id: "s4", chartId: null, x: 40, y: 480, width: 515, height: 300 },
+      { id: "s1", chartId: null, comment: "", x: 40, y: 40, width: 515, height: 200 },
+      { id: "s2", chartId: null, comment: "", x: 40, y: 260, width: 250, height: 200 },
+      { id: "s3", chartId: null, comment: "", x: 305, y: 260, width: 250, height: 200 },
+      { id: "s4", chartId: null, comment: "", x: 40, y: 480, width: 515, height: 300 },
     ]
   },
   {
@@ -97,9 +709,9 @@ const TEMPLATES: Template[] = [
     name: "A4 Landscape PDF",
     dimensions: { width: 842, height: 595 }, 
     slots: [
-      { id: "s1", chartId: null, x: 40, y: 40, width: 762, height: 200 },
-      { id: "s2", chartId: null, x: 40, y: 260, width: 380, height: 295 },
-      { id: "s3", chartId: null, x: 440, y: 260, width: 380, height: 295 },
+      { id: "s1", chartId: null, comment: "", x: 40, y: 40, width: 762, height: 200 },
+      { id: "s2", chartId: null, comment: "", x: 40, y: 260, width: 380, height: 295 },
+      { id: "s3", chartId: null, comment: "", x: 440, y: 260, width: 380, height: 295 },
     ]
   },
   {
@@ -107,625 +719,277 @@ const TEMPLATES: Template[] = [
     name: "16×9 PPT Deck",
     dimensions: { width: 1280, height: 720 }, 
     slots: [
-      { id: "s1", chartId: null, x: 40, y: 40, width: 1200, height: 640 },
+      { id: "s1", chartId: null, comment: "", x: 40, y: 40, width: 1200, height: 640 },
     ]
   }
 ]
 
 
-const COMMENT_STYLE = {
-  background: "#f8f9fa",
-  border: "1.5px solid #e9ecef",
-  handleBackground: "rgba(108, 117, 125, 0.06)",
-  resizeBackground: "rgba(108, 117, 125, 0.11)",
-  textColor: "#495057"
-};
-
-// Render chart by id (memoized)
-const renderChart = (chartId: string | null) => {
-  if (!chartId) return null
-  switch (chartId) {
-    case "publication-trend":
-      return <PublicationTrends />
-    case "applicant-analysis":
-      return <ApplicantTypePie />
-    case "top-ipc":
-      return <TopIPCCodes />
-    case "top-10-applicants":
-      return <Top10Applicants />
-    case "top-10-keywords":
-      return <TopKeywords />
-    case "patent-field-trends":
-      return <PatentFieldTrends />
-    case "evolving-word-cloud":
-      return <EvolvingWordCloud />
-    case "cooccurrence-trends":
-      return <CooccurrenceTrends />
-    case "applicant-collaboration-network":
-      return <ApplicantCollaborationNetwork />
-    case "family-member-count":
-      return <FamilyMemberCountChart />
-    case "family-size-distribution":
-      return <FamilySizeDistributionChart />
-    case "international-protection-matrix":
-      return <InternationalProtectionMatrixChart />
-    case "international-patent-flow":
-      return <InternationalPatentFlowChart />
-    case "geographic-distribution":
-      return <GeographicalDistribution />
-    default:
-      return (
-        <div className="flex items-center justify-center h-64">
-          <p className="text-gray-500">Chart data for {chartId}</p>
-        </div>
-      )
-  }
-}
-const ChartSlot = memo(
-  function ChartSlot({ chartId }: { chartId: string | null }) {
-    const [isLoading, setIsLoading] = useState(true);
-    
-    useEffect(() => {
-      if (chartId) {
-        setIsLoading(true);
-        // Simulate chart loading
-        const timer = setTimeout(() => {
-          setIsLoading(false);
-        }, 800);
-        
-        return () => clearTimeout(timer);
-      }
-    }, [chartId]);
-    
-    return (
-      <div className="w-full h-full relative">
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-50 bg-opacity-80 z-10">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-          </div>
-        )}
-        {renderChart(chartId)}
-      </div>
-    );
-  },
-  (prev, next) => prev.chartId === next.chartId
-);
-
-const MIN_SLOT_WIDTH = 120
-const MIN_SLOT_HEIGHT = 90
-const MIN_COMMENT_WIDTH = 140
-const MIN_COMMENT_HEIGHT = 60
-const PADDING = 32
-
-function moveOverlappingSlots(movedSlot: Slot, prevLayout: Slot[], minGap = 16) {
-  let layout = prevLayout.map(s => ({ ...s }))
-  const idx = layout.findIndex(s => s.id === movedSlot.id)
-  layout[idx] = { ...movedSlot }
-  let hasChanges = true
-  while (hasChanges) {
-    hasChanges = false
-    for (let i = 0; i < layout.length; ++i) {
-      for (let j = 0; j < layout.length; ++j) {
-        if (i === j) continue
-        const a = layout[i]
-        const b = layout[j]
-        if (
-          a.x < b.x + b.width &&
-          a.x + a.width > b.x &&
-          a.y < b.y + b.height &&
-          a.y + a.height > b.y
-        ) {
-          if (b.y < a.y + a.height) {
-            layout[j] = {
-              ...b,
-              y: a.y + a.height + minGap
-            }
-            hasChanges = true
-          }
-        }
-      }
-    }
-  }
-  return layout
-}
 
 export default function Reporting() {
-  const { selectedCharts, setSelectedCharts } = useChartContext()
+  const { selectedCharts, setSelectedCharts, chartComments, setChartComments } = useChartContext()
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null)
-  const [pages, setPages] = useState<Page[]>([])
-  const [activePageIdx, setActivePageIdx] = useState(0)
+  const [layout, setLayout] = useState<Slot[]>([])
   const [isLayoutUnlocked, setIsLayoutUnlocked] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [showWarning, setShowWarning] = useState(false)
-  const [isExporting, setIsExporting] = useState(false);
-  const [chartLoading, setChartLoading] = useState<Record<string, boolean>>({});
-  // When template picked, create first page
+
+  // Initialize layout when template is selected
   useEffect(() => {
     if (selectedTemplate) {
-      setPages([{
-        id: `page-1`,
-        name: "Page 1",
-        layout: [...selectedTemplate.slots],
-        comments: [],
-      }])
-      setActivePageIdx(0)
+      setLayout([...selectedTemplate.slots])
     }
   }, [selectedTemplate])
-  const activePage = pages[activePageIdx]
-  const getCurrentPageChartIds = () => {
-    return activePage?.layout
-      .filter(slot => slot.chartId)
-      .map(slot => slot.id) || [];
-  };
 
-  const waitForCharts = (selector: string) => {
-    return new Promise<void>(resolve => {
-      const check = () => {
-        const charts = document.querySelectorAll(selector);
-        if (charts.length > 0) {
-          resolve();
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      check();
-    });
-  };
-  
-
-  const { allLoaded: chartsLoaded, markAsLoaded } = useChartLoading(getCurrentPageChartIds());
-  const getPageDimensions = (page: Page) => {
-    const width = Math.max(
-      ...(page.layout?.map(slot => slot.x + slot.width) || []),
-      ...(page.comments?.map(c => c.x + c.width) || []),
-      selectedTemplate?.dimensions.width || 600
-    ) + PADDING;
+  // Handle drag end events
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
     
-    const height = Math.max(
-      ...(page.layout?.map(slot => slot.y + slot.height) || []),
-      ...(page.comments?.map(c => c.y + c.height) || []),
-      selectedTemplate?.dimensions.height || 600
-    ) + PADDING;
+    if (over?.id && active.id !== over.id) {
+      const activeChartId = active.id.toString()
+      const slotId = over.id.toString()
+      
+      setLayout(prev => prev.map(slot => 
+        slot.id === slotId ? { ...slot, chartId: activeChartId } : slot
+      ))
+    }
     
-    return { width, height };
-  };
+    setActiveId(null)
+  }
 
-  // Add new page (duplicate template structure, empty)
-  const addNewPage = () => {
-    if (!selectedTemplate) return
-    setPages(pages => [
-      ...pages,
-      {
-        id: `page-${pages.length + 1}`,
-        name: `Page ${pages.length + 1}`,
-        layout: [...selectedTemplate.slots.map(s => ({ ...s, chartId: null }))],
-        comments: [],
-      }
-    ])
-    setActivePageIdx(pages.length)
-  }
-  // Remove page (if more than 1)
-  const removePage = (idx: number) => {
-    if (pages.length === 1) return
-    setPages(p => p.filter((_, i) => i !== idx))
-    setActivePageIdx(idx === 0 ? 0 : idx - 1)
-  }
-  
-
-  // ---- Slot & comment operations on active page ----
-  function updateLayout(updater: (layout: Slot[]) => Slot[]) {
-    setPages(pages =>
-      pages.map((pg, i) =>
-        i === activePageIdx ? { ...pg, layout: updater(pg.layout) } : pg
-      )
-    )
-  }
-  function updateComments(updater: (comments: StickyComment[]) => StickyComment[]) {
-    setPages(pages =>
-      pages.map((pg, i) =>
-        i === activePageIdx ? { ...pg, comments: updater(pg.comments) } : pg
-      )
-    )
-  }
+  // Add new slot in custom layout mode
   const addNewSlot = () => {
-    updateLayout(layout => [
-      ...layout,
-      { id: `slot-${Date.now()}`, chartId: null, x: 60, y: 60, width: 200, height: 150 }
-    ])
+    const newSlot: Slot = {
+      id: `slot-${Date.now()}`,
+      chartId: null,
+      comment: "",
+      x: 50,
+      y: 50,
+      width: 200,
+      height: 150
+    }
+    setLayout([...layout, newSlot])
   }
-  const addNewComment = () => {
-    updateComments(comments => [
-      ...comments,
-      {
-        id: `comment-${Date.now()}`,
-        text: "",
-        x: 120,
-        y: 120,
-        width: 180,
-        height: 80,
-        fontSize: 14,
-        bold: false,
-        italic: false,
-        underline: false,
-        color: "#222"
-      }
-    ])
+
+  // Remove a slot
+  const removeSlot = (slotId: string) => {
+    setLayout(layout.filter(slot => slot.id !== slotId))
   }
-  const removeSlot = (slotId: string) => updateLayout(layout => layout.filter(slot => slot.id !== slotId))
-  const removeComment = (commentId: string) => updateComments(comments => comments.filter(c => c.id !== commentId))
-  const updateCommentText = (id: string, text: string) =>
-    updateComments(comments => comments.map(c => c.id === id ? { ...c, text } : c))
-  function updateCommentStyle(
-    commentId: string,
-    styleProp: keyof Omit<StickyComment,
-      'id'|'x'|'y'|'width'|'height'|'text'>,
-    value: any
-  ) {
-    setPages(pgs =>
-      pgs.map((pg, i) =>
-        i === activePageIdx
-          ? {
-              ...pg,
-              comments: pg.comments.map(c =>
-                c.id === commentId ? { ...c, [styleProp]: value } : c
-              )
-            }
-          : pg
+
+  // Update slot comment
+  const updateSlotComment = (slotId: string, comment: string) => {
+    setLayout(prev => 
+      prev.map(slot => 
+        slot.id === slotId ? { ...slot, comment } : slot
       )
-    );
+    )
   }
-  const toggleChart = (id: string) => {
+
+  // Toggle chart selection
+  const toggleChart = (id: ChartId) => {
     setSelectedCharts(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     )
   }
 
-  // --- PDF Download (enforce lock) ---
-  const pageWidth = Math.max(
-    ...(activePage?.layout?.map(slot => slot.x + slot.width) || []),
-    ...(activePage?.comments?.map(c => c.x + c.width) || []),
-    selectedTemplate?.dimensions.width || 600
-  ) + PADDING
-  const pageHeight = Math.max(
-    ...(activePage?.layout?.map(slot => slot.y + slot.height) || []),
-    ...(activePage?.comments?.map(c => c.y + c.height) || []),
-    selectedTemplate?.dimensions.height || 600
-  ) + PADDING
-
-  // … inside your Reporting() component, just above the return:
-  // Add this utility function
-const waitForAll = (predicate: () => boolean, timeout = 10000) => {
-  return new Promise<void>((resolve, reject) => {
-    const startTime = Date.now();
-    const check = () => {
-      if (predicate()) {
-        resolve();
-      } else if (Date.now() - startTime > timeout) {
-        reject(new Error('Timeout waiting for condition'));
-      } else {
-        setTimeout(check, 100);
-      }
-    };
-    check();
-  });
-};
-
-// In the generatePdf function:
+  // Export report as PDF
 const generatePdf = async () => {
-  if (isLayoutUnlocked) {
-    setShowWarning(true);
-    setTimeout(() => setShowWarning(false), 2100);
-    return;
-  }
-  
   if (!selectedTemplate) return;
-  setIsExporting(true);
-  
-  try {
-    const pdf = new jsPDF();
-    const originalPageIdx = activePageIdx;
-    
-    for (let i = 0; i < pages.length; i++) {
-      setActivePageIdx(i);
-      // Wait for UI to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const previewNode = document.querySelector('.preview-canvas');
-      if (!previewNode) continue;
-      
-      // Wait for all charts to be present
-      await waitForAll(() => {
-        return previewNode.querySelectorAll('[id^="chart-"]').length > 0;
-      });
-      
-      // Wait for charts to finish rendering
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const { width, height } = getPageDimensions(pages[i]);
-      const canvas = await html2canvas(previewNode as HTMLElement, { 
-        scale: 1,
-        backgroundColor: "#FFFFFF",
-        useCORS: true,
-        logging: true,
-        ignoreElements: (element) => {
-          // Ignore the loading overlay if present
-          return element.classList.contains('export-loading-overlay');
-        }
-      });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      
-      // Calculate aspect ratio
-      const aspectRatio = imgWidth / imgHeight;
-      const pdfPageWidth = pdf.internal.pageSize.getWidth();
-      const pdfPageHeight = pdf.internal.pageSize.getHeight();
-      
-      // Calculate dimensions to fit the page
-      let renderWidth = pdfPageWidth;
-      let renderHeight = pdfPageHeight;
-      
-      if (aspectRatio > pdfPageWidth / pdfPageHeight) {
-        renderHeight = pdfPageWidth / aspectRatio;
-      } else {
-        renderWidth = pdfPageHeight * aspectRatio;
-      }
-      
-      // Center the image
-      const x = (pdfPageWidth - renderWidth) / 2;
-      const y = (pdfPageHeight - renderHeight) / 2;
-      
-      if (i > 0) pdf.addPage();
-      
-      pdf.addImage(
-        imgData,
-        'PNG',
-        x,
-        y,
-        renderWidth,
-        renderHeight
-      );
-    }
-    
-    setActivePageIdx(originalPageIdx);
-    pdf.save(`${selectedTemplate.name}_report.pdf`);
-  } catch (e) {
-    console.error("PDF export failed:", e);
-    alert("PDF export failed: " + e);
-  } finally {
-    setIsExporting(false);
-  }
+  const previewNode = document.querySelector('.relative.mx-auto.bg-white.border');
+  if (!previewNode) return;
+
+  const canvas = await html2canvas(previewNode as HTMLElement, { scale: 2 });
+  const imgData = canvas.toDataURL('image/png');
+  const pdf = new jsPDF({
+    orientation:
+      selectedTemplate.dimensions.width > selectedTemplate.dimensions.height
+        ? 'landscape'
+        : 'portrait',
+    unit: 'pt',
+    format: [selectedTemplate.dimensions.width, selectedTemplate.dimensions.height],
+  });
+
+  pdf.addImage(
+    imgData,
+    'PNG',
+    0,
+    0,
+    selectedTemplate.dimensions.width,
+    selectedTemplate.dimensions.height
+  );
+  pdf.save(`${selectedTemplate.name}.pdf`);
 };
 
-// In the generatePpt function:
-const generatePpt = async () => {
-  if (isLayoutUnlocked) {
-    setShowWarning(true);
-    setTimeout(() => setShowWarning(false), 2100);
-    return;
+// Export report as PowerPoint
+// ─── Replace your old generatePptx with this ─────────────────────────────────
+
+const generatePptx = async () => {
+  // 1. Grab all rendered charts
+  const divs = Array.from(
+    document.querySelectorAll<HTMLDivElement>('[id^="chart-"]')
+  );
+  if (!divs.length) {
+    return alert("No charts to export.");
   }
-  
-  if (!selectedTemplate) return;
-  setIsExporting(true);
-  
+
+  // 2. Screenshot each one
+  const images = await Promise.all(
+    divs.map(async (d) => ({
+      // strip off the "chart-" prefix so your backend can key off the raw id
+      id: d.id.replace(/^chart-/, ""),
+      data: (await html2canvas(d)).toDataURL("image/png"),
+    }))
+  );
+
   try {
-    const images = [];
-    const originalPageIdx = activePageIdx;
-    
-    
-    for (let i = 0; i < pages.length; i++) {
-      setActivePageIdx(i);
-      // Wait for UI to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const previewNode = document.querySelector('.preview-canvas');
-      if (!previewNode) continue;
-      
-      // Wait for all charts to be present
-      await waitForAll(() => {
-        return previewNode.querySelectorAll('[id^="chart-"]').length > 0;
-      });
-      
-      // Wait for charts to finish rendering
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const canvas = await html2canvas(previewNode as HTMLElement, { 
-        scale: 1,
-        backgroundColor: "#FFFFFF",
-        useCORS: true,
-        logging: true,
-        ignoreElements: (element) => {
-          return element.classList.contains('export-loading-overlay');
-        }
-      });
-      
-      // Capture actual pixel dimensions
-      const imgWidthPx = canvas.width;
-      const imgHeightPx = canvas.height;
-      
-      images.push({
-        id: `page-${i+1}`,
-        data: canvas.toDataURL("image/png"),
-        width: imgWidthPx,
-        height: imgHeightPx
-      });
-    }
-    
-    setActivePageIdx(originalPageIdx);
-    
-    // Get backend port
-    const portResponse = await fetch("/backend_port.txt");
-    const port = await portResponse.text();
-    
-    // Send to backend with page dimensions
+    // 3. Find the port your local service is running on
+    const port = (await (await fetch("/backend_port.txt")).text()).trim();
+
+    // 4. POST images + comments to your API
     const res = await fetch(`http://localhost:${port}/api/report/generate-pptx`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        images,
-        dimensions: {
-          width: selectedTemplate.dimensions.width,
-          height: selectedTemplate.dimensions.height
-        }
-      }),
+      body: JSON.stringify({ images, comments: chartComments }),
     });
 
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
 
-    // Download the PPT
+    // 5. Download the blob as a .pptx
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "report.pptx";
+    a.download = "charts-report.pptx";
     a.click();
   } catch (e) {
-    console.error("PPT export failed:", e);
-    alert("PPT export failed: " + e);
-  } finally {
-    setIsExporting(false);
+    console.error(e);
+    alert("Export failed: " + e);
   }
 };
 
 
-  // --- Slot drag/resize handlers: always auto-push other slots out of the way
-  function handleSlotDrag(id: string, startX: number, startY: number) {
-    const slotIdx = activePage.layout.findIndex(s => s.id === id)
-    if (slotIdx === -1) return
-    const slot = activePage.layout[slotIdx]
-    const origX = slot.x
-    const origY = slot.y
-
-    function onMouseMove(e: MouseEvent) {
-      const deltaX = e.clientX - startX
-      const deltaY = e.clientY - startY
-      updateLayout(prev => {
-        const updatedSlot = { ...slot, x: origX + deltaX, y: origY + deltaY }
-        return moveOverlappingSlots(updatedSlot, prev)
-      })
-    }
-    function onMouseUp() {
-      window.removeEventListener("mousemove", onMouseMove)
-      window.removeEventListener("mouseup", onMouseUp)
-    }
-    window.addEventListener("mousemove", onMouseMove)
-    window.addEventListener("mouseup", onMouseUp)
-  }
-  function useChartLoading(chartIds: string[]) {
-    const [loadedCharts, setLoadedCharts] = useState<Record<string, boolean>>({});
-    const [allLoaded, setAllLoaded] = useState(false);
-  
-    useEffect(() => {
-      const allLoaded = chartIds.every(id => loadedCharts[id]);
-      setAllLoaded(allLoaded);
-    }, [loadedCharts, chartIds]);
-  
-    const markAsLoaded = (id: string) => {
-      setLoadedCharts(prev => ({ ...prev, [id]: true }));
+  // Sortable slot component
+  const SortableSlot = ({ slot }: { slot: Slot }) => {
+    const { 
+      attributes, 
+      listeners, 
+      setNodeRef, 
+      transform, 
+      transition 
+    } = useSortable({ id: slot.id })
+    
+    // const style = {
+    //   transform: CSS.Transform.toString(transform),
+    //   transition,
+    // }
+    const slotStyle: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      width: '100%',
+      height: '100%',
+      minHeight: slot.chartId ? 'auto' : '150px',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
     };
-  
-    return { allLoaded, markAsLoaded };
-  }
-  function handleSlotResizeMouseDown(slot: Slot, e: React.MouseEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    const startX = e.clientX
-    const startY = e.clientY
-    const startW = slot.width
-    const startH = slot.height
-    function onMouseMove(moveEvent: MouseEvent) {
-      const deltaX = moveEvent.clientX - startX
-      const deltaY = moveEvent.clientY - startY
-      const newWidth = Math.max(MIN_SLOT_WIDTH, startW + deltaX)
-      const newHeight = Math.max(MIN_SLOT_HEIGHT, startH + deltaY)
-      updateLayout(prev => {
-        const updatedSlot = { ...slot, width: newWidth, height: newHeight }
-        return moveOverlappingSlots(updatedSlot, prev)
-      })
-    }
-    function onMouseUp() {
-      window.removeEventListener("mousemove", onMouseMove)
-      window.removeEventListener("mouseup", onMouseUp)
-    }
-    window.addEventListener("mousemove", onMouseMove)
-    window.addEventListener("mouseup", onMouseUp)
-  }
-  function handleCommentDrag(id: string, startX: number, startY: number) {
-    const commentIdx = activePage.comments.findIndex(c => c.id === id)
-    if (commentIdx === -1) return
-    const sticky = activePage.comments[commentIdx]
-    const origX = sticky.x
-    const origY = sticky.y
-    function onMouseMove(e: MouseEvent) {
-      const deltaX = e.clientX - startX
-      const deltaY = e.clientY - startY
-      updateComments(comments =>
-        comments.map(c =>
-          c.id === id
-            ? { ...c, x: origX + deltaX, y: origY + deltaY }
-            : c
-        )
-      )
-    }
-    function onMouseUp() {
-      window.removeEventListener("mousemove", onMouseMove)
-      window.removeEventListener("mouseup", onMouseUp)
-    }
-    window.addEventListener("mousemove", onMouseMove)
-    window.addEventListener("mouseup", onMouseUp)
-  }
-  function handleCommentResizeMouseDown(sticky: StickyComment, e: React.MouseEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    const startX = e.clientX
-    const startY = e.clientY
-    const startW = sticky.width
-    const startH = sticky.height
-    function onMouseMove(moveEvent: MouseEvent) {
-      const deltaX = moveEvent.clientX - startX
-      const deltaY = moveEvent.clientY - startY
-      const newWidth = Math.max(MIN_COMMENT_WIDTH, startW + deltaX)
-      const newHeight = Math.max(MIN_COMMENT_HEIGHT, startH + deltaY)
-      updateComments(comments =>
-        comments.map(c =>
-          c.id === sticky.id
-            ? { ...c, width: newWidth, height: newHeight }
-            : c
-        )
-      )
-    }
-    function onMouseUp() {
-      window.removeEventListener("mousemove", onMouseMove)
-      window.removeEventListener("mouseup", onMouseUp)
-    }
-    window.addEventListener("mousemove", onMouseMove)
-    window.addEventListener("mouseup", onMouseUp)
-  }
-  function onChartDrop(e: React.DragEvent, slotId: string) {
-    e.preventDefault()
-    const chartId = e.dataTransfer.getData("chartId")
-    if (!chartId) return
-    updateLayout(prev =>
-      prev.map(s =>
-        s.id === slotId
-          ? { ...s, chartId }
-          : s
-      )
-    )
-  }
 
-  // --------- Template selector modal ---------
+    const renderChart = (chartId: string | null, width?: number, height?: number) => {
+  if (!chartId) return null;
+  switch (chartId) {
+    case "publication-trend":
+      return <PublicationTrends />;
+    case "applicant-analysis":
+      return (
+        <div className="w-full flex justify-center items-center">
+          <ApplicantTypePie />
+        </div>
+      );
+    case "top-ipc":
+      return <TopIPCCodes />;
+    case "top-10-applicants":
+      return <Top10Applicants />;
+    case "top-10-keywords":
+      return <TopKeywords />;
+    case "patent-field-trends":
+      return <PatentFieldTrends />;
+    case "evolving-word-cloud":
+      return <EvolvingWordCloud />;
+    case "cooccurrence-trends":
+      return <CooccurrenceTrends />;
+    case "applicant-collaboration-network":
+      return <ApplicantCollaborationNetwork />;
+    case "family-member-count":
+      return <FamilyMemberCountChart />;
+    case "family-size-distribution":  
+      return <FamilySizeDistributionChart />;
+    case "international-protection-matrix":
+      return <InternationalProtectionMatrixChart />;
+    case "international-patent-flow":
+      return <InternationalPatentFlowChart />;
+    case "geographic-distribution":
+      return <GeographicalDistribution />;
+    // Add additional chart mappings as needed
+    default:
+      return (
+        <div className="flex items-center justify-center h-64">
+          <p className="text-gray-500">Chart data for {chartId}</p>
+        </div>
+      );
+  }
+};
+
+return (
+  <div
+    ref={setNodeRef}
+    style={slotStyle}
+    className={`relative w-full h-full border rounded p-2 bg-white flex flex-col ${
+      slot.chartId ? "" : "bg-gray-100 border-dashed"
+    }`}
+  >
+    {/* Delete button - only shown when slot has chart and layout is unlocked */}
+    {isLayoutUnlocked && slot.chartId && (
+      <button 
+        onClick={() => removeSlot(slot.id)}
+        className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 z-10"
+      >
+        <Trash size={14} />
+      </button>
+    )}
+    
+    {slot.chartId ? (
+      <div className="flex-1 overflow-hidden">
+        {/* Chart rendering - unchanged */}
+        {renderChart(slot.chartId, slot.width, slot.height)}
+      </div>
+    ) : (
+      <div className="flex-1 flex items-center justify-center text-gray-400">
+        Drop chart here
+      </div>
+    )}
+    
+    {/* Comment section */}
+    <Textarea
+      placeholder="Add comment"
+      value={slot.comment}
+      onChange={(e) => updateSlotComment(slot.id, e.target.value)}
+      className="mt-2 w-full text-xs flex-shrink-0"
+    />
+  </div>
+)
+}
+
+  // Template selector modal
   if (!selectedTemplate) {
     return (
-      <div className="container mx-auto p-6" style={{ paddingTop: 'var(--header-height)' }}>
+      <div className="container mx-auto p-6">
         <Card>
           <CardHeader>
             <CardTitle>Choose Report Template</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {TEMPLATES.map(template => (
-              <div
+              <div 
                 key={template.id}
                 className="border rounded-lg p-4 cursor-pointer hover:bg-gray-50"
                 onClick={() => setSelectedTemplate(template)}
@@ -735,11 +999,11 @@ const generatePpt = async () => {
                   {template.dimensions.width} × {template.dimensions.height} pt
                 </div>
                 <div className="mt-4 flex justify-center">
-                  <div
+                  <div 
                     className="relative bg-gray-100 border"
-                    style={{
-                      width: template.dimensions.width / 4,
-                      height: template.dimensions.height / 4
+                    style={{ 
+                      width: template.dimensions.width / 4, 
+                      height: template.dimensions.height / 4 
                     }}
                   >
                     {template.slots.map(slot => (
@@ -747,10 +1011,10 @@ const generatePpt = async () => {
                         key={slot.id}
                         className="absolute border border-dashed border-gray-400 bg-gray-50 bg-opacity-50"
                         style={{
-                          left: slot.x / 4,
-                          top: slot.y / 4,
-                          width: slot.width / 4,
-                          height: slot.height / 4
+                          left: slot.x! / 4,
+                          top: slot.y! / 4,
+                          width: slot.width! / 4,
+                          height: slot.height! / 4
                         }}
                       />
                     ))}
@@ -764,421 +1028,145 @@ const generatePpt = async () => {
     )
   }
 
-  // ----------- Main Render -----------
+  // Calculate preview scale (70% of original)
+  const previewScale = 0.7
+  const previewWidth = selectedTemplate.dimensions.width * previewScale
+  const previewHeight = selectedTemplate.dimensions.height * previewScale
+
   return (
     <div className="container mx-auto p-6">
-      {/* PAGE TABS */}
-      <div className="flex gap-2 mb-4">
-        {pages.map((pg, i) => (
-          
-          <button
-            key={pg.id}
-            onClick={() => setActivePageIdx(i)}
-            className={`flex items-center gap-2 px-3 py-1 border-b-2 ${
-              i === activePageIdx 
-                ? "border-gray-700 bg-gray-200 text-gray-900 font-bold" 
-                : "border-transparent bg-gray-100 text-gray-700"
-            } rounded-t transition-colors`}
-            style={{ minWidth: 68 }}
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">
+          {selectedTemplate.name} Report
+        </h1>
+        <div className="flex gap-2">
+          <Button
+            variant={isLayoutUnlocked ? "default" : "outline"}
+            onClick={() => setIsLayoutUnlocked(!isLayoutUnlocked)}
           >
-            <File size={15} className="mr-1" />
-            {pg.name}
-            {pages.length > 1 && isLayoutUnlocked && (
-              <span
-                className="ml-2 text-xs text-red-400 cursor-pointer hover:underline"
-                onClick={e => { e.stopPropagation(); removePage(i); }}
-                title="Remove page"
-              >
-                &times;
-              </span>
-            )}
-          </button>
-        ))}
-        {isLayoutUnlocked && (
-          <button
-            onClick={addNewPage}
-            className="flex items-center gap-2 px-3 py-1 text-gray-800 bg-gray-100 border-b-2 border-transparent rounded-t hover:bg-gray-200 transition-colors"
-    >
-            <FilePlus2 size={16} />
-            Add Page
-          </button>
-        )}
+            {isLayoutUnlocked ? <><Unlock size={16} className="mr-2" /> Lock Layout</> : 
+                                <><Lock size={16} className="mr-2" /> Unlock Layout</>}
+          </Button>
+          {isLayoutUnlocked && (
+            <Button onClick={addNewSlot}>
+              <Plus size={16} className="mr-2" /> Add Slot
+            </Button>
+          )}
+        </div>
       </div>
+
       <div className="flex gap-6">
-        {/* Chart Palette Sidebar (sticky!) */}
-        <div
-          className="w-full md:w-1/4 mb-6 md:mb-0"
-          style={{
-            position: "sticky",
-            top: 'var(--header-height)',
-            alignSelf: "flex-start",
-            zIndex: 999,
-            minWidth: 225,
-            maxHeight: "90vh",
-            height: "fit-content"
+        {/* Chart Palette */}
+        <div className="w-full md:w-1/4 mb-6 md:mb-0">
+  <Card>
+    <CardHeader>
+      <CardTitle>Charts</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-3">
+      {availableCharts.map(({ id, title, type }) => (
+        <div 
+          key={id}
+          className="flex items-center p-3 border rounded hover:bg-gray-50 cursor-move"
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData("chartId", id)
+            setActiveId(id)
           }}
         >
-
-<Card style={{ maxHeight: '70vh', overflow: 'hidden' }}>
-  <CardHeader>
-    <CardTitle>Charts</CardTitle>
-  </CardHeader>
-  <CardContent 
-    className="space-y-3" 
-    style={{ 
-      maxHeight: 'calc(70vh - 57px)', // Adjust based on header height
-      overflowY: 'auto'
-    }}
-  >
-    {availableCharts.map(({ id, title, type }) => (
-      <div
-        key={id}
-        className="flex items-center p-3 border rounded hover:bg-gray-50 cursor-move"
-        draggable
-        onDragStart={e => {
-          e.dataTransfer.setData("chartId", id)
-          setActiveId(id)
-        }}
-      >
-        {/* <Checkbox
-          id={id}
-          checked={selectedCharts.includes(id)}
-          onCheckedChange={() => toggleChart(id)}
-          className="mr-3"
-        /> */}
-        <label htmlFor={id} className="flex-1 font-medium text-sm">
-          {title} <span className="text-gray-500 text-xs">({type})</span>
-        </label>
-      </div>
-    ))}
-  </CardContent>
-</Card>
+          <Checkbox
+            id={id}
+            checked={selectedCharts.includes(id)}
+            onCheckedChange={() => toggleChart(id)}
+            className="mr-3"
+          />
+          <label htmlFor={id} className="flex-1 font-medium text-sm">
+            {title} <span className="text-gray-500 text-xs">({type})</span>
+          </label>
         </div>
-        {/* Template Preview */}
-        <div className="flex-1">
-          {/* Top controls */}
-          <div className="flex justify-between mb-2">
-  <div>
-    <Button
-      variant={isLayoutUnlocked ? "default" : "outline"}
-      onClick={() => setIsLayoutUnlocked(!isLayoutUnlocked)}
-    >
-      {isLayoutUnlocked
-        ? <><Unlock size={16} className="mr-2" /> Lock Layout</>
-        : <><Lock   size={16} className="mr-2" /> Unlock Layout</>}
-    </Button>
-    {isLayoutUnlocked && (
-      <>
-        <Button onClick={addNewSlot} className="ml-2">
-          <Plus size={16} className="mr-2" /> Add Slot
-        </Button>
-        <Button onClick={addNewComment} className="ml-2" variant="outline">
-          <MessageCircle size={16} className="mr-2" /> Add Comment
-        </Button>
-      </>
-    )}
-  </div>
-
-  <div className="flex items-center space-x-2">
-    {/* PDF */}
-    <Button
-      onClick={generatePdf}
-      className="flex items-center"
-      size="lg"
-      disabled={isLayoutUnlocked}
-      style={{ opacity: isLayoutUnlocked ? 0.7 : 1 }}
-    >
-      <Download size={18} className="mr-2" />
-      Export PDF
-    </Button>
-
-    {/* PPT */}
-    <Button
-      onClick={generatePpt}
-      className="flex items-center"
-      size="lg"
-      disabled={isLayoutUnlocked}
-      style={{ opacity: isLayoutUnlocked ? 0.7 : 1 }}
-    >
-      <Download size={18} className="mr-2" />
-      Export PPT
-    </Button>
-
-    {showWarning && (
-      <span className="ml-3 text-red-600 font-medium bg-yellow-50 border border-yellow-300 px-3 py-1 rounded shadow">
-        Please lock layout before downloading!
-      </span>
-    )}
-  </div>
+      ))}
+    </CardContent>
+  </Card>
 </div>
 
+        {/* Template Preview */}
+        <div className="flex-1">
           <Card>
             <CardHeader>
-              <CardTitle>{activePage?.name} Preview</CardTitle>
+              <CardTitle>Report Preview</CardTitle>
             </CardHeader>
             <CardContent className="overflow-auto">
-              <div className="flex justify-center">
-                <div
-                  className="preview-canvas relative bg-white border"
-                  style={{
-                    width: pageWidth,
-                    height: pageHeight,
-                    minWidth: 300,
-                    minHeight: 300,
-                    transition: "width 0.15s, height 0.15s"
-                  }}
-                >
-                  {/* Slots */}
-                  {activePage?.layout.map(slot => (
-                    <div
-                      key={slot.id}
-                      style={{
-                        position: "absolute",
-                        left: slot.x,
-                        top: slot.y,
-                        width: slot.width,
-                        height: slot.height,
-                        border: "1px solid #ccc",
-                        borderRadius: 8,
-                        background: slot.chartId ? "#fff" : "#f9fafb",
-                        boxShadow: "0 1px 3px #0001",
-                        zIndex: 5,
-                        display: "flex",
-                        flexDirection: "column",
-                        overflow: "hidden"
-                      }}
-                      onDrop={e => onChartDrop(e, slot.id)}
-                      onDragOver={e => e.preventDefault()}
-                    >
-                      {/* Move handle */}
-                      {isLayoutUnlocked && (
-                        <div
-                          onMouseDown={e => handleSlotDrag(slot.id, e.clientX, e.clientY)}
-                          style={{
-                            position: "absolute",
-                            left: 0,
-                            top: 0,
-                            width: "100%",
-                            height: 18,
-                            background: "rgba(0,0,0,0.04)",
-                            cursor: "grab",
-                            zIndex: 10,
-                            borderTopLeftRadius: 8,
-                            borderTopRightRadius: 8,
-                            userSelect: "none"
-                          }}
-                        ></div>
-                      )}
-                      {/* Delete */}
-                      {isLayoutUnlocked && (
-                        <button
-                          onClick={() => removeSlot(slot.id)}
-                          className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 z-20"
-                        >
-                          <Trash size={14} />
-                        </button>
-                      )}
-                      <div style={{ flex: 1, minHeight: 0, paddingTop: isLayoutUnlocked ? 18 : 0 }}>
-                        {slot.chartId ? (
-                            <div 
-                            id={`chart-${slot.id}`}
-                            style={{ 
-                              width: '100%', 
-                              height: '100%',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              position: 'relative',
-                              overflow: 'hidden',
-                            }}
-                          >
-                            <ChartSlot chartId={slot.chartId} />
-                          </div>
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400">
-                            Drop chart here
-                          </div>
-                        )}
-                      </div>
-                      {/* Resize handle */}
-                      {isLayoutUnlocked && (
-                        <div
-                          onMouseDown={e => handleSlotResizeMouseDown(slot, e)}
-                          style={{
-                            position: "absolute",
-                            right: 0,
-                            bottom: 0,
-                            width: 18,
-                            height: 18,
-                            background: "rgba(0,0,0,0.1)",
-                            cursor: "nwse-resize",
-                            zIndex: 10,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            borderRadius: "0 0 8px 0"
-                          }}
-                        >
-                          <svg width="14" height="14">
-                            <polyline
-                              points="0,14 14,14 14,0"
-                              stroke="#888"
-                              strokeWidth="2"
-                              fill="none"
-                            />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {/* Movable, resizable sticky comments */}
-                  {activePage?.comments.map(sticky => (
-                    <div
-                      key={sticky.id}
-                      style={{
-                        position: "absolute",
-                        left: sticky.x,
-                        top: sticky.y,
-                        width: sticky.width,
-                        height: sticky.height,
-                        zIndex: 10,
-                        background: COMMENT_STYLE.background,
-                        border: COMMENT_STYLE.border,
-                        borderRadius: 6,
-                        boxShadow: "0 1px 6px #0001",
-                        display: "flex",
-                        flexDirection: "column",
-                        pointerEvents: isLayoutUnlocked ? "auto" : "none"
-                      }}
-                    >
-                      {/* ── Toolbar ── */}
-                      {isLayoutUnlocked && (
-                        <div className="flex items-center gap-1 px-1 py-0.5 bg-gray-200">
-                          <select
-                            value={sticky.fontSize}
-                            onChange={e => updateCommentStyle(sticky.id, 'fontSize', +e.target.value)}
-                            className="text-xs"
-                          >
-                            {[12,14,16,18,20,24,28].map(sz => (
-                              <option key={sz} value={sz}>{sz}px</option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => updateCommentStyle(sticky.id, 'bold', !sticky.bold)}
-                            className={`px-1 ${sticky.bold ? 'bg-gray-400' : ''}`}
-                          ><b>B</b></button>
-                          <button
-                            onClick={() => updateCommentStyle(sticky.id, 'italic', !sticky.italic)}
-                            className={`px-1 ${sticky.italic ? 'bg-gray-400' : ''}`}
-                          ><em>I</em></button>
-                          <button
-                            onClick={() => updateCommentStyle(sticky.id, 'underline', !sticky.underline)}
-                            className={`px-1 ${sticky.underline ? 'bg-gray-400' : ''}`}
-                          ><u>U</u></button>
-                          <input
-                            type="color"
-                            value={sticky.color}
-                            onChange={e => updateCommentStyle(sticky.id, 'color', e.target.value)}
-                            className="w-6 h-6 p-0 border-none"
-                          />
-                        </div>
-                      )}
-                      {isLayoutUnlocked && (
-                        <div
-                          onMouseDown={e => handleCommentDrag(sticky.id, e.clientX, e.clientY)}
-                          style={{
-                            width: "100%",
-                            height: 18,
-                            cursor: "grab",
-                            borderTopLeftRadius: 6,
-                            borderTopRightRadius: 6,
-                            background: COMMENT_STYLE.background
-                          }}
-                        />
-                      )}
-                      
-                      {isLayoutUnlocked && (
-                        <button
-                          onClick={() => removeComment(sticky.id)}
-                          className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 z-20"
-                        >
-                          <Trash size={14} />
-                        </button>
-                      )}
-                      <Textarea
-                        className="w-full text-xs px-2 py-1 flex-1 bg-transparent border-0 resize-none outline-none"
-                        value={sticky.text}
-                        onChange={e => updateCommentText(sticky.id, e.target.value)}
-                        placeholder="Comment"
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          boxShadow: "none",
-                          minHeight: 32,
-                          resize: "none",
-                          pointerEvents: isLayoutUnlocked ? "auto" : "none",
-                          color: COMMENT_STYLE.textColor,
-                          fontWeight: sticky.bold ? "bold" : "normal",
-                          fontStyle: sticky.italic ? "italic" : "normal",
-                          textDecoration: sticky.underline ? "underline" : "none",
-                          fontSize: sticky.fontSize + "px",
-                        }}
-                        disabled={!isLayoutUnlocked}
-                      />
-                      {/* Resize handle */}
-                      {isLayoutUnlocked && (
-                        <div
-                          onMouseDown={e => handleCommentResizeMouseDown(sticky, e)}
-                          style={{
-                            position: "absolute",
-                            right: 0,
-                            bottom: 0,
-                            width: 18,
-                            height: 18,
-                            background: COMMENT_STYLE.resizeBackground,
-                            cursor: "nwse-resize",
-                            zIndex: 12,
-                            borderRadius: "0 0 6px 0",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center"
-                          }}
-                        >
-                          <svg width="14" height="14">
-                            <polyline
-                              points="0,14 14,14 14,0"
-                              stroke="#2196f3"
-                              strokeWidth="2"
-                              fill="none"
-                            />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-      {isExporting && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 z-[1000] flex items-center justify-center">
-    <div className="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 mb-4"></div>
-      <p className="text-lg font-medium text-gray-800">
-        Preparing export...
-      </p>
-      <p className="text-gray-600 mt-1">
-        Rendering page {activePageIdx + 1} of {pages.length}
-      </p>
-      {!chartsLoaded && (
-        <p className="text-gray-500 text-sm mt-2">
-          Waiting for charts to load...
-        </p>
-      )}
+  <div className="flex justify-center">
+    <div 
+      className="relative bg-white border"
+      style={{ 
+        width: `${previewWidth}px`, 
+        height: `${previewHeight}px`,
+      }}
+    >
+      {layout.map(slot => {
+        // Scale slot positions and dimensions to fit preview
+        const scaledSlot = {
+          ...slot,
+          x: (slot.x || 0) * previewScale,
+          y: (slot.y || 0) * previewScale,
+          width: (slot.width || 0) * previewScale,
+          height: (slot.height || 0) * previewScale
+        };
+        
+        return (
+          <div
+            key={slot.id}
+            id={`slot-${slot.id}`}
+            className="absolute"
+            style={{
+              left: scaledSlot.x,
+              top: scaledSlot.y,
+              width: scaledSlot.width,
+              height: scaledSlot.height,
+            }}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => {
+              e.preventDefault();
+              const chartId = e.dataTransfer.getData("chartId");
+              if (!chartId) return;
+              setLayout(prev =>
+                prev.map(s =>
+                  s.id === slot.id ? { ...s, chartId } : s
+                )
+              );
+            }}
+          >
+            <SortableSlot slot={slot} />
+          </div>
+        );
+      })}
     </div>
   </div>
-)}
+</CardContent>
+          </Card>
+
+          {/* Export Actions */}
+          <div className="mt-6 flex justify-center gap-4">
+            <Button
+              onClick={generatePdf}
+              className="flex items-center space-x-2"
+              size="lg"
+            >
+              <Download size={18} />
+              <span>Export PDF</span>
+            </Button>
+            <Button
+              onClick={generatePptx}
+              className="flex items-center space-x-2"
+              variant="outline"
+              size="lg"
+            >
+              <Presentation size={18} />
+              <span>Export PowerPoint</span>
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
