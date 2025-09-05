@@ -4,10 +4,17 @@ venv/
 **/venv/
 **/.venv/
 
-# Python bytecode & build
+# Python caches & builds
 __pycache__/
 *.py[cod]
+
+# App builds
+frontend/.next/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
 
 # Local env / generated
 backend/.env
 frontend/public/backend_port.txt
+backend/outputs/
+
