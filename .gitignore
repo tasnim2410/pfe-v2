@@ -1,3 +1,13 @@
+# Virtual envs
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# Python bytecode & build
 __pycache__/
-*.pyc
-venv/**/__pycache__/
+*.py[cod]
+
+# Local env / generated
+backend/.env
+frontend/public/backend_port.txt
