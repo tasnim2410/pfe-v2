@@ -1,12 +1,33 @@
-# Virtual envs
-venv/
-.venv/
-**/venv/
-**/.venv/
-
-# Python caches & builds
+# Python bytecode & caches
 __pycache__/
-*.py[cod]
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Build/outputs
+dist/
+build/
+*.egg-info/
+*.log
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Local env files
+.env
+.env.*
+
 
 # App builds
 frontend/.next/

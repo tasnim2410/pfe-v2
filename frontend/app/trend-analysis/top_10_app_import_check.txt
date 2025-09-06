@@ -1,2 +1,0 @@
-import Top10App from "@/components/top_10_app";
-// This is just a check to confirm import path and existence.
