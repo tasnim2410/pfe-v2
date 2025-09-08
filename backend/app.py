@@ -1,10 +1,13 @@
 # backendTry1/app.py
 import os
 import time
+import sys
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import pandas as pd
 from sqlalchemy import text
+import sqlalchemy
+from pathlib import Path
 # import your scraper & post‐download processor
 from scraping_raw_data import EspacenetScraper, process_downloaded_data ,DatabaseManager ,extract_field_keyword_pairs
 #from family_members import ensure_columns_exist
@@ -16,12 +19,16 @@ from family_members import process_patent_api , PatentsSearch , process_rows
 from flask import Flask, request, jsonify
 import logging
 from outputs.scaler import GlobalScalers
+from market_strategy import (
+    TOKEN_URL_DEFAULT, LEGAL_URL_DEFAULT,
+    DEAD_PATTERNS, ST3_TO_ISO3,
+    load_api_credentials, build_token_cache, get_access_token,
+    fetch_legal_raw, parse_legal_json_or_xml,
+    classify_member_status, load_gdp_map, compute_msi
+)
 
 import concurrent.futures
-import time
 from urllib.parse import quote
-import requests
-import sqlalchemy
 from dotenv import load_dotenv
 import threading
 import json
@@ -82,7 +89,6 @@ from db import ResearchData3, ResearchWindow, ResearchTopic, ResearchDivergence 
 import subprocess
 import json
 import os
-import time
 import threading
 import requests
 from urllib.parse import quote
@@ -4836,6 +4842,531 @@ def create_app():
             }), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+        
+        
+        
+        
+    
+    
+    
+    
+    
+    # === [LEGAL STATUS + MARKET STRATEGY via market_strategy.py] =================
+    # Uses the reusable utilities in market_strategy.py:
+    #  - load_api_credentials(), build_token_cache(), fetch_legal_raw(), parse_legal_json_or_xml()
+    #  - classify_member_status(), load_gdp_map(), compute_msi()
+    #
+    # It updates 3 columns on 'raw_patents':
+    #   legal_statuses (JSONB), alive_any (BOOLEAN), market_strategy_index (FLOAT)
+    # and exposes a summary endpoint for dashboard cards.
+        # === [Logging for Market Strategy job] ======================================
+    # Console-only logging (no files). Safe on hot-reload: we guard against duplicates.
+    
+    MARKET_LOGGER_NAME = "market_strategy"
+    ms_logger = logging.getLogger(MARKET_LOGGER_NAME)
+
+    if not ms_logger.handlers:
+        ms_logger.setLevel(logging.INFO)
+        _fmt = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+        _sh = logging.StreamHandler(stream=sys.stdout)  # console only
+        _sh.setFormatter(_fmt)
+        ms_logger.addHandler(_sh)
+
+    def _fmt_secs(total_seconds: float) -> str:
+        """Format seconds as HH:MM:SS for ETA readibility in console."""
+        try:
+            total_seconds = int(total_seconds)
+            m, s = divmod(total_seconds, 60)
+            h, m = divmod(m, 60)
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        except Exception:
+            return f"{total_seconds:.1f}s"
+    # === [/Logging for Market Strategy job] =====================================
+
+    # Prepare shared state (credentials, token cache, GDP map) once per process.
+        # --- Preflight OPS credentials: keep only the working ones ---------------
+    from requests import HTTPError
+
+    try:
+        _ALL_CREDS = load_api_credentials()
+    except Exception as e:
+        print(f"[market_strategy] WARN: no OPS credentials found: {e}")
+        _ALL_CREDS = []
+
+    LEGAL_API_CREDS = []       # active, verified credentials only
+    LEGAL_TOKEN_CACHE = []     # aligned cache, same length as LEGAL_API_CREDS
+    _disabled_creds = []       # list of (index_in_all, reason) for report
+
+    if _ALL_CREDS:
+        for i, cred in enumerate(_ALL_CREDS):
+            # Build a one-element cache to test this single cred safely
+            _test_cache = build_token_cache([cred])
+            try:
+                # get_access_token will populate _test_cache[0]['token'] on success
+                _ = get_access_token(0, [cred], _test_cache)
+                LEGAL_API_CREDS.append(cred)
+                LEGAL_TOKEN_CACHE = build_token_cache(LEGAL_API_CREDS)
+            except HTTPError as he:
+                _disabled_creds.append((i, f"HTTP {getattr(he.response, 'status_code', 'ERR')}"))
+            except Exception as e:
+                _disabled_creds.append((i, f"{type(e).__name__}: {e}"))
+
+    # Console summary
+    if LEGAL_API_CREDS:
+        ms_logger.info(f"OPS credentials: active={len(LEGAL_API_CREDS)}, disabled={len(_disabled_creds)}")
+    else:
+        ms_logger.error("No valid OPS credentials after preflight. Please fix .env (CONSUMER_KEY[_i]/CONSUMER_SECRET[_i]).")
+
+
+    # Load GDP map (Country Code ISO3 -> GDP_latest) + US GDP for normalization
+    try:
+        GDP_CSV_PATH = os.path.join(os.path.dirname(__file__), "country-GDP.csv")
+        ISO3_GDP_MAP, US_GDP_VAL = load_gdp_map(GDP_CSV_PATH)
+    except Exception as e:
+        print(f"[market_strategy] WARN: failed to load GDP CSV: {e}")
+        ISO3_GDP_MAP, US_GDP_VAL = {}, 1.0  # keeps endpoint functional (MSI=0)
+
+    @app.get('/api/ops/diagnostics')
+    def ops_diagnostics():
+        try:
+            env_path = Path(__file__).with_name('.env')
+        except Exception:
+            env_path = None
+        keys = sorted([k for k in os.environ.keys() if k.startswith('CONSUMER_KEY')])
+        secs = sorted([k for k in os.environ.keys() if k.startswith('CONSUMER_SECRET')])
+        return jsonify({
+            'env_path_checked': str(env_path) if env_path else None,
+            'env_path_exists': (env_path.exists() if env_path else None),
+            'keys_found': keys,
+            'secrets_found': secs,
+            'key_count': len(keys),
+            'secret_count': len(secs),
+            'active_creds_count': len(LEGAL_API_CREDS),
+            'disabled_creds_count': len(_disabled_creds),
+        })
+
+    def _ensure_market_columns(engine):
+        """Add new columns if missing. Safe/idempotent to call at each run."""
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE raw_patents ADD COLUMN IF NOT EXISTS legal_statuses JSONB"))
+                conn.execute(text("ALTER TABLE raw_patents ADD COLUMN IF NOT EXISTS alive_any BOOLEAN"))
+                conn.execute(text("ALTER TABLE raw_patents ADD COLUMN IF NOT EXISTS market_strategy_index DOUBLE PRECISION"))
+                conn.commit()
+                ms_logger.info("DDL check OK: columns ensured (legal_statuses, alive_any, market_strategy_index).")
+            except Exception as e:
+                ms_logger.error(f"DDL check FAILED: {e}")
+                raise
+
+
+
+    def _to_docdb(pub) -> str:
+        """
+        Best-effort normalization to DOCDB shape 'CC.NUM[.KIND]' for OPS legal endpoint.
+        Accepts already dotted forms. Otherwise tries to parse country (2 letters), number, optional kind.
+        """
+        s = str(pub or "").strip()
+        if not s:
+            return s
+        if "." in s:
+            return s  # assume already DOCDB-ish
+        # remove spaces/dashes/slashes
+        alnum = re.sub(r"[^A-Za-z0-9]", "", s)
+        m = re.match(r"^([A-Za-z]{2})(\d+)([A-Za-z]\d{0,2})?$", alnum)
+        if m:
+            cc, num, kind = m.group(1).upper(), m.group(2), (m.group(3) or "").upper()
+            return f"{cc}.{num}.{kind}" if kind else f"{cc}.{num}"
+        return s  # last resort: let OPS try to resolve
+
+    @app.route('/api/legal_status/ops', methods=['GET', 'POST'])
+    def api_update_legal_status_and_market_strategy():
+        """
+        Batch job to compute per-family legal coverage + Market Strategy Index (MSI).
+
+        Body (optional):
+          {
+            "limit": 0,          # 0 => process all
+            "sleep": 1.2,        # seconds between OPS calls
+            "batch_size": 100,   # commit frequency
+            "log_every": 50,     # log progress every N patents
+            "only_missing": true # process only rows where legal_statuses is NULL
+          }
+        """
+        from requests import HTTPError
+
+        # No body is required; keep defaults but ignore for offline mode.
+        payload     = request.get_json(silent=True) or {}
+        limit       = int(payload.get("limit", 0))
+        sleep_s     = float(payload.get("sleep", 1.2))
+        batch_size  = int(payload.get("batch_size", 100))
+        log_every   = max(1, int(payload.get("log_every", 50)))
+        only_missing= bool(payload.get("only_missing", True))
+
+        # Ensure required columns are present
+        _ensure_market_columns(engine)
+
+        # Build query (process the entire DB; no request body needed)
+        q = db.session.query(RawPatent).order_by(RawPatent.id.asc())
+        patents = q.all()
+
+        # Detect mode: OPS online vs offline fallback, allowing dynamic .env reload
+        local_creds = list(LEGAL_API_CREDS) if LEGAL_API_CREDS else []
+        local_token_cache = list(LEGAL_TOKEN_CACHE) if LEGAL_TOKEN_CACHE else []
+        if not local_creds:
+            try:
+                # reload from .env at request-time to honor updates without restart
+                reloaded = load_api_credentials()
+                if reloaded:
+                    local_creds = reloaded
+                    local_token_cache = build_token_cache(local_creds)
+                    ms_logger.info(f"[OPS] Reloaded credentials from .env at request time: {len(local_creds)} keys")
+            except Exception as e:
+                ms_logger.warning(f"[OPS] No credentials available at request time: {e}")
+        use_ops = len(local_creds) > 0
+
+        # ---------------------- OFFLINE FALLBACK (no OPS creds) ----------------------
+        if not use_ops:
+            ms_logger.warning("OPS credentials unavailable — running OFFLINE market strategy using first_publication_country/applicant_country and GDP CSV")
+
+            # Try to load GDP map from several likely locations
+            iso3_map, us_gdp = ISO3_GDP_MAP, US_GDP_VAL
+            try:
+                from pathlib import Path as _P
+                candidates = [
+                    _P(__file__).with_name('country-GDP.csv'),                              # backend/country-GDP.csv
+                    _P(__file__).resolve().parents[1] / 'country-GDP.csv',                 # technology-trend-analysis/country-GDP.csv
+                    _P(__file__).resolve().parents[2] / 'country-GDP.csv',                 # repo root/country-GDP.csv
+                ]
+                used = None
+                for c in candidates:
+                    if c.exists():
+                        try:
+                            iso3_map, us_gdp = load_gdp_map(str(c))
+                            used = str(c)
+                            break
+                        except Exception as ee:
+                            continue
+                if used:
+                    ms_logger.info(f"Loaded GDP CSV from {used}")
+                else:
+                    ms_logger.warning("Failed to load country-GDP.csv from known locations; MSI will be zero")
+            except Exception:
+                pass
+
+            def _label(msi: float) -> str:
+                if msi < 0.6:
+                    return "Local"
+                if msi < 0.9:
+                    return "Main Markets"
+                return "Global"
+
+            def _kind_factor(pubno: str) -> float:
+                """Infer pending/granted from kind code: A* ~ pending (0.6), B*/C* ~ granted (1.0)."""
+                try:
+                    if not pubno:
+                        return 1.0
+                    clean = re.sub(r"[^A-Za-z0-9]", "", str(pubno).upper())
+                    m = re.search(r"([A-Z]\d{0,2})$", clean)
+                    if not m:
+                        return 1.0
+                    k0 = m.group(1)[0]
+                    if k0 == "A":
+                        return 0.6  # 40% reduction for pending
+                    return 1.0
+                except Exception:
+                    return 1.0
+
+            # Expected designation distributions (coarse priors) for EP/WO
+            # Values sum ~= 1.0 over ISO3 keys
+            EP_EXPECTED: dict = {
+                "DEU": 0.22, "FRA": 0.15, "GBR": 0.15, "ITA": 0.10, "ESP": 0.08,
+                "NLD": 0.07, "SWE": 0.05, "CHE": 0.06, "AUT": 0.04, "DNK": 0.03,
+                "FIN": 0.03, "IRL": 0.02
+            }
+            WO_EXPECTED: dict = {
+                "USA": 0.35, "CHN": 0.20, "JPN": 0.15, "KOR": 0.10, "DEU": 0.08,
+                "FRA": 0.06, "GBR": 0.06
+            }
+
+            updated_ids, failed = [], []
+            t0 = time.time()
+            buckets = {"Local": 0, "Main Markets": 0, "Global": 0}
+            total = len(patents)
+
+            denom = float(us_gdp or 1.0)
+
+            for idx, pat in enumerate(patents):
+                cc2 = (pat.first_publication_country or pat.applicant_country or "").strip().upper()
+                if not cc2 or len(cc2) != 2:
+                    cc2 = (pat.applicant_country or "").strip().upper()
+
+                # Determine base expected GDP share
+                if cc2 in ("EP", "WO"):
+                    dist = EP_EXPECTED if cc2 == "EP" else WO_EXPECTED
+                    exp_gdp = 0.0
+                    for iso3_key, w in dist.items():
+                        g = iso3_map.get(iso3_key)
+                        if g is not None:
+                            exp_gdp += float(g) * float(w)
+                    base = exp_gdp / denom if denom else 0.0
+                else:
+                    iso3 = ST3_TO_ISO3.get(cc2) if cc2 else None
+                    if not iso3:
+                        failed.append({"id": pat.id, "reason": f"unsupported or missing country: '{cc2}'"})
+                        continue
+                    gdp = iso3_map.get(iso3)
+                    if gdp is None:
+                        failed.append({"id": pat.id, "reason": f"no GDP for ISO3 {iso3}"})
+                        continue
+                    base = float(gdp) / denom if denom else 0.0
+
+                factor = _kind_factor(pat.first_publication_number or pat.publication_number)
+                msi = base * factor
+                pat.market_strategy_index = float(msi)
+                # We cannot infer per-country legal status offline
+                pat.legal_statuses = None
+                # alive_any left unchanged (could be None)
+                updated_ids.append(pat.id)
+
+                lbl = _label(msi)
+                buckets[lbl] = buckets.get(lbl, 0) + 1
+
+                if len(updated_ids) % max(batch_size, 1) == 0:
+                    try:
+                        db.session.commit()
+                        ms_logger.info(f"Committed offline batch at id={pat.id} | updated_total={len(updated_ids)} failed={len(failed)}")
+                    except Exception as e:
+                        db.session.rollback()
+                        failed.append({"batch_failed_at": pat.id, "error": str(e)})
+                        ms_logger.error(f"Offline batch commit failed at id={pat.id}: {e}")
+
+                if (idx + 1) % max(log_every, 1) == 0 or (idx + 1) == total:
+                    elapsed = time.time() - t0
+                    rate = (idx + 1) / max(elapsed, 1e-6)
+                    eta_s = (total - (idx + 1)) / max(rate, 1e-6)
+                    ms_logger.info(f"OFFLINE progress {idx+1}/{total} ({(idx+1)*100/total:.1f}%) updated={len(updated_ids)} failed={len(failed)} avg={elapsed/max(idx+1,1):.2f}s/it ETA={_fmt_secs(eta_s)}")
+
+            # Final commit
+            try:
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                ms_logger.error(f"Offline final commit failed: {e}")
+
+            # Aggregate stats
+            try:
+                df = pd.read_sql(
+                    text("SELECT market_strategy_index FROM raw_patents WHERE market_strategy_index IS NOT NULL"),
+                    con=engine
+                )
+                avg_msi = float(df["market_strategy_index"].mean()) if not df.empty else 0.0
+                med_msi = float(df["market_strategy_index"].median()) if not df.empty else 0.0
+            except Exception:
+                avg_msi = med_msi = 0.0
+
+            total_elapsed = time.time() - t0
+            sample = None
+            if updated_ids:
+                row = db.session.query(RawPatent).get(updated_ids[-1])
+                if row:
+                    sample = {"id": row.id, "market_strategy_index": row.market_strategy_index}
+
+            return jsonify({
+                "success": True,
+                "mode": "offline",
+                "processed": total,
+                "updated": len(updated_ids),
+                "failed_top": failed[:10],
+                "buckets": buckets,
+                "avg_msi": round(avg_msi, 4),
+                "median_msi": round(med_msi, 4),
+                "sample": sample,
+                "elapsed_s": round(total_elapsed, 2)
+            })
+
+        total = len(patents)
+        if total == 0:
+            ms_logger.info("Nothing to process (query returned 0 rows).")
+            return jsonify({"success": True, "processed": 0, "updated": 0, "failed": [], "sample": None})
+
+        ms_logger.info(f"Starting Market Strategy job: total={total}, sleep={sleep_s}s, batch_size={batch_size}, only_missing={only_missing}")
+
+        updated_ids, failed = [], []
+        t0 = time.time()
+
+        def _disable_cred_at(ci: int, reason: str):
+            """Remove a bad credential from rotation during the run."""
+            try:
+                bad = local_creds[ci]
+            except Exception:
+                return
+            ms_logger.warning(f"Disabling OPS credential idx={ci} at runtime ({reason}). Remaining={len(local_creds)-1}")
+            # remove cred + its cached token in lockstep
+            del local_creds[ci]
+            del local_token_cache[ci]
+
+        for idx, pat in enumerate(patents):
+            pub_raw = getattr(pat, "first_publication_number", None) or getattr(pat, "publication_number", None)
+            if not pub_raw or len(str(pub_raw).strip()) < 4:
+                failed.append({"id": pat.id, "reason": "invalid publication number"})
+                if (idx + 1) % log_every == 0 or (idx + 1) == total:
+                    elapsed = time.time() - t0
+                    rate = (idx + 1) / max(elapsed, 1e-6)
+                    eta_s = (total - (idx + 1)) / max(rate, 1e-6)
+                    ms_logger.info(f"Progress {idx+1}/{total} ({(idx+1)*100/total:.1f}%) updated={len(updated_ids)} failed={len(failed)} avg={elapsed/max(idx+1,1):.2f}s/it ETA={_fmt_secs(eta_s)}")
+                time.sleep(sleep_s)
+                continue
+
+            pub_docdb = _to_docdb(pub_raw)
+
+            # choose a credential index based on current active pool
+            if not local_creds:
+                failed.append({"id": pat.id, "pub": str(pub_docdb), "reason": "no active creds"})
+                break
+            cred_idx = idx % len(local_creds)
+
+            def _attempt_with(ci: int):
+                """One attempt to fetch + compute using credential index ci."""
+                payload_obj, err = fetch_legal_raw(pub_docdb, ci, local_creds, local_token_cache)
+                if payload_obj is None:
+                    # fetch_legal_raw returns (None, "...") on non-HTTP exceptions it catches;
+                    # but if token fetch raised HTTPError, we won't get here (caught outside).
+                    raise RuntimeError(err or "fetch failed")
+                members = parse_legal_json_or_xml(payload_obj)
+                status_by_country = {}
+                for m in members:
+                    cc = (m.get("country") or "").upper().strip()
+                    if cc:
+                        status_by_country[cc] = classify_member_status(m)
+                alive_any = any(st in ("GRANTED", "PENDING") for st in status_by_country.values())
+                msi = compute_msi(status_by_country, ISO3_GDP_MAP, US_GDP_VAL)
+                return status_by_country, alive_any, msi
+
+            try:
+                # 1st attempt with selected cred
+                status_by_country, alive_any, msi = _attempt_with(cred_idx)
+
+            except HTTPError as he:
+                # Token request failed (e.g., 401). Disable this cred and retry once with the next available.
+                code = getattr(he.response, "status_code", None)
+                if code == 401:
+                    _disable_cred_at(cred_idx, "401 Unauthorized")
+                    if not local_creds:  # nothing left
+                        failed.append({"id": pat.id, "pub": str(pub_docdb), "reason": "all creds disabled"})
+                        ms_logger.error("All OPS credentials disabled. Aborting remaining items.")
+                        break
+                    # Retry once with a new index (recompute since pool size changed)
+                    new_ci = idx % len(local_creds)
+                    try:
+                        status_by_country, alive_any, msi = _attempt_with(new_ci)
+                    except Exception as e2:
+                        failed.append({"id": pat.id, "pub": str(pub_docdb), "reason": f"retry failed: {e2}"})
+                        ms_logger.warning(f"[{pat.id}] retry failed after disabling a bad key: {e2}")
+                        time.sleep(sleep_s)
+                        continue
+                else:
+                    failed.append({"id": pat.id, "pub": str(pub_docdb), "reason": f"HTTPError: {code}"})
+                    ms_logger.warning(f"[{pat.id}] token fetch error (HTTP {code})")
+                    time.sleep(sleep_s)
+                    continue
+
+            except Exception as e:
+                # Other errors (network hiccup, parse error, etc.)
+                failed.append({"id": pat.id, "pub": str(pub_docdb), "reason": str(e)})
+                ms_logger.warning(f"[{pat.id}] fetch/parse error: {e}")
+                time.sleep(sleep_s)
+                continue
+
+            # --- success path: write fields & maybe commit
+            pat.legal_statuses = status_by_country
+            pat.alive_any = bool(alive_any)
+            pat.market_strategy_index = float(msi)
+            updated_ids.append(pat.id)
+
+            if len(updated_ids) % batch_size == 0:
+                try:
+                    db.session.commit()
+                    ms_logger.info(f"Committed batch at id={pat.id} | updated_total={len(updated_ids)} failed={len(failed)}")
+                except Exception as e:
+                    db.session.rollback()
+                    failed.append({"batch_failed_at": pat.id, "error": str(e)})
+                    ms_logger.error(f"Batch commit failed at id={pat.id}: {e}")
+
+            # Progress heartbeat every N
+            if (idx + 1) % log_every == 0 or (idx + 1) == total:
+                elapsed = time.time() - t0
+                rate = (idx + 1) / max(elapsed, 1e-6)
+                eta_s = (total - (idx + 1)) / max(rate, 1e-6)
+                ms_logger.info(f"Progress {idx+1}/{total} ({(idx+1)*100/total:.1f}%) updated={len(updated_ids)} failed={len(failed)} avg={elapsed/max(idx+1,1):.2f}s/it ETA={_fmt_secs(eta_s)}")
+
+            time.sleep(sleep_s)
+
+        # Final commit
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            ms_logger.error(f"Final commit failed: {e}")
+            return jsonify({"success": False, "error": f"Database commit failed: {str(e)}"}), 500
+
+        total_elapsed = time.time() - t0
+        ms_logger.info(f"Job done. processed={total} updated={len(updated_ids)} failed={len(failed)} total_time={_fmt_secs(total_elapsed)} avg={total_elapsed/max(total,1):.2f}s/it")
+
+        sample = None
+        if updated_ids:
+            row = db.session.query(RawPatent).filter(RawPatent.id == updated_ids[0]).first()
+            if row:
+                sample = {
+                    "id": row.id,
+                    "first_publication_number": row.first_publication_number,
+                    "legal_statuses": row.legal_statuses,
+                    "alive_any": row.alive_any,
+                    "market_strategy_index": row.market_strategy_index
+                }
+
+        return jsonify({
+            "success": True,
+            "processed": total,
+            "updated": len(updated_ids),
+            "failed_top": failed[:10],
+            "sample": sample,
+            "active_creds": len(local_creds),
+            "elapsed_s": round(total_elapsed, 2)
+        })
+
+
+
+    @app.route('/api/market_strategy/summary', methods=['GET'])
+    def api_market_strategy_summary():
+        """
+        Aggregate MSI view for dashboard cards.
+        Response:
+            { "count": N, "avg_msi": ..., "median_msi": ..., "alive_share_%": ... }
+
+        Notes for report:
+            - avg_msi and median_msi summarize the GDP-weighted protection level per family.
+            - alive_share_% is the share of families with at least one GRANTED or PENDING member.
+        """
+        try:
+            df = pd.read_sql(
+                text("SELECT market_strategy_index, alive_any FROM raw_patents WHERE market_strategy_index IS NOT NULL"),
+                con=engine
+            )
+            if df.empty:
+                return jsonify({"count": 0, "avg_msi": 0.0, "median_msi": 0.0, "alive_share_%": 0.0})
+            avg_msi = float(df["market_strategy_index"].mean())
+            med_msi = float(df["market_strategy_index"].median())
+            alive_share = float((df["alive_any"] == True).mean() * 100.0)
+            return jsonify({
+                "count": int(len(df)),
+                "avg_msi": round(avg_msi, 4),
+                "median_msi": round(med_msi, 4),
+                "alive_share_%": round(alive_share, 2)
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+   
+
 
         
 

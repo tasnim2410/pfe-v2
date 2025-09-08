@@ -11,3 +11,10 @@ __pycache__/
 *.sqlite3
 *.egg-info/
 .env
+
+# Python virtualenv
+venv/
+.venv/
+
+__pycache__/
+*.py[cod]

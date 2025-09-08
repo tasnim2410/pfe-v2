@@ -29,6 +29,11 @@ class RawPatent(db.Model):
     first_publication_country = db.Column('first_publication_country', db.String(2), nullable=True)
     second_publication_country = db.Column('second_publication_country', db.String(2), nullable=True)
     abstract = db.Column('abstract', db.Text, nullable=True)
+        # --- Market strategy columns (new) ---
+    legal_statuses = db.Column('legal_statuses', db.JSON, nullable=True)  # { "US":"GRANTED", "CN":"PENDING", ... }
+    alive_any = db.Column('alive_any', db.Boolean, nullable=True)         # True if any member is GRANTED or PENDING
+    market_strategy_index = db.Column('market_strategy_index', db.Float, nullable=True)  # GDP-normalized MSI
+
 
     def to_dict(self):
         return {
@@ -54,7 +59,10 @@ class RawPatent(db.Model):
             'first_publication_country': self.first_publication_country,
             'second_publication_country': self.second_publication_country,
             'earliest_publication': self.earliest_publication.isoformat() if self.earliest_publication else None,
-            'abstract': self.abstract
+            'abstract': self.abstract,
+            'legal_statuses': self.legal_statuses,
+            'alive_any': self.alive_any,
+            'market_strategy_index': self.market_strategy_index
         }
 class SearchKeyword(db.Model):
     __tablename__ = 'search_keywords'
