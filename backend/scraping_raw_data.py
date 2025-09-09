@@ -12,8 +12,9 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException
+from selenium.common.exceptions import TimeoutException, ElementClickInterceptedException, SessionNotCreatedException
 from cleaners import clean_espacenet_data 
+import re
 
 # Load environment variables
 load_dotenv()
@@ -319,10 +320,57 @@ class EspacenetScraper:
             options.add_argument('--disable-extensions')       # drop automation extensions
             options.add_argument('--disable-gpu')              # optional – saves GPU resources
         
-        self.driver = uc.Chrome(options=options)
+        def _fresh_options():
+            o = uc.ChromeOptions()
+            if headless:
+                o.add_argument('--headless=new')
+                o.add_argument('--window-size=1920,1080')
+                o.add_argument('--disable-blink-features=AutomationControlled')
+                o.add_argument('--no-sandbox')
+                o.add_argument('--disable-dev-shm-usage')
+                o.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+                o.add_argument('--disable-extensions')
+                o.add_argument('--disable-gpu')
+            return o
+
+        try:
+            self.driver = uc.Chrome(options=options)
+        except SessionNotCreatedException as e:
+            # Typical mismatch: "This version of ChromeDriver only supports Chrome version 140"
+            # and "Current browser version is 139.x"
+            msg = str(e)
+            cur = re.search(r"Current browser version is (\d+)", msg)
+            sup = re.search(r"only supports Chrome version (\d+)", msg)
+            version_hint = None
+            if cur:
+                version_hint = int(cur.group(1))
+            elif sup:
+                # If only driver-supported version is shown, try that
+                version_hint = int(sup.group(1))
+            if version_hint:
+                print(f"[undetected_chromedriver] Retrying with version_main={version_hint} due to mismatch")
+                self.driver = uc.Chrome(options=_fresh_options(), version_main=version_hint)
+            else:
+                raise
+        except Exception as e:
+            # Some environments raise a generic WebDriver error; attempt the same fallback
+            msg = str(e)
+            cur = re.search(r"Current browser version is (\d+)", msg)
+            sup = re.search(r"only supports Chrome version (\d+)", msg)
+            version_hint = None
+            if cur:
+                version_hint = int(cur.group(1))
+            elif sup:
+                version_hint = int(sup.group(1))
+            if version_hint:
+                print(f"[undetected_chromedriver] Generic error, retrying with version_main={version_hint}")
+                self.driver = uc.Chrome(options=_fresh_options(), version_main=version_hint)
+            else:
+                raise
         self.driver.set_page_load_timeout(30)
         self.driver.set_window_size(1600, 1300)
-        
+        # Will be populated from the results header like "844 244 résultats trouvés"
+        self.total_results = None
         
     field_mapping = {
         'title': 'ti',
@@ -472,6 +520,51 @@ class EspacenetScraper:
                     )
                     print(f"More Options button found by XPath: {more_options_button}")
                     
+                
+                # Right before clicking More Options, try to read the total results from header
+                try:
+                    # First try CSS selector for the header h1
+                    header_h1 = None
+                    try:
+                        header_h1 = WebDriverWait(self.driver, 15).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "#result-list > h1"))
+                        )
+                    except TimeoutException:
+                        # Fallback to absolute XPath
+                        header_h1 = WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_element_located((By.XPATH, "/html/body/div/div/div[3]/div/div[4]/div/h1"))
+                        )
+
+                    # Find the nested div that contains the text like "844 244 résultats trouvés"
+                    text_div = None
+                    try:
+                        text_div = header_h1.find_element(By.CSS_SELECTOR, "div > span > div > div > div")
+                    except Exception:
+                        try:
+                            text_div = self.driver.find_element(By.XPATH, "/html/body/div/div/div[3]/div/div[4]/div/h1/div/span/div/div/div")
+                        except Exception:
+                            text_div = None
+
+                    header_text = None
+                    if text_div and text_div.text:
+                        header_text = text_div.text.strip()
+                    else:
+                        # Fallback: use entire h1 text
+                        header_text = header_h1.text.strip() if header_h1 else None
+
+                    if header_text:
+                        # Extract digits only to handle thousands separators and any locale-specific text
+                        digits_only = re.sub(r"\D", "", header_text)
+                        if digits_only:
+                            self.total_results = int(digits_only)
+                            print(f"Detected total results from header: {self.total_results}")
+                        else:
+                            print(f"Header present but no digits parsed from: '{header_text}'")
+                    else:
+                        print("Results header not found or empty before clicking More Options.")
+                except Exception as e:
+                    print(f"Failed to parse total results from header: {e}")
+                
                 
                 # Try to click, but handle intercepted clicks
                 try:

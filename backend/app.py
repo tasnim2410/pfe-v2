@@ -144,12 +144,13 @@ from growth_rate import compute_patent_growth_from_counts  # past/current growth
 class ServerThread(threading.Thread):
     def __init__(self, app, port):
         threading.Thread.__init__(self)
-        self.srv = make_server('127.0.0.1', port, app)
+        self.port = port
+        self.srv = make_server('127.0.0.1', self.port, app)
         self.ctx = app.app_context()
         self.ctx.push()
 
     def run(self):
-        print(f"Running Flask app on http://127.0.0.1:{port}")
+        print(f"Running Flask app on http://127.0.0.1:{self.port}")
         self.srv.serve_forever()
 
     def shutdown(self):
@@ -841,6 +842,7 @@ def create_app():
                 search_keywords=None,
                 headless=True,
             )
+            total_results_count = None
            
             try:
                 # Load the Espacenet page
@@ -850,6 +852,13 @@ def create_app():
                 # Download the CSV file
                 if not scraper.download_csv(max_results=500):
                     return jsonify({"error": "Failed to download CSV"}), 500
+
+                # Capture total results parsed from the results header by the scraper
+                try:
+                    total_results_count = scraper.total_results
+                    app.logger.info(f"Total results detected: {total_results_count}")
+                except Exception:
+                    total_results_count = None
 
                 # Wait to ensure file download completes
                 time.sleep(10)
@@ -881,13 +890,13 @@ def create_app():
             try:
                 with db_manager.engine.connect() as connection:
                     keyword_params = [
-                        {"search_id": search_id, "field": field, "keyword": keyword}
+                        {"search_id": search_id, "field": field, "keyword": keyword, "total_results": total_results_count}
                         for field, keyword in search_pairs
                     ]
                     connection.execute(
                     text("""
-                     INSERT INTO search_keywords (search_id, field, keyword)
-                 VALUES (:search_id, :field, :keyword)
+                     INSERT INTO search_keywords (search_id, field, keyword, total_results)
+                 VALUES (:search_id, :field, :keyword, :total_results)
                 """),
                     keyword_params
                 )
@@ -905,7 +914,8 @@ def create_app():
             # 4) Return the response
             response_data = {
                 "search_id": search_id,
-                "results": df.to_dict(orient='records')  
+                "results": df.to_dict(orient='records'),
+                "total_results": total_results_count
             }
 
             return jsonify(response_data), 200
@@ -5659,12 +5669,12 @@ if __name__ == '__main__':
         print(app.url_map)
         
 
-    def find_free_port():
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return s.getsockname()[1]
-
-    port = find_free_port()
+    # Prefer explicit port configuration for frontend compatibility
+    port_env = os.getenv("NEXT_PUBLIC_BACKEND_PORT") or os.getenv("BACKEND_PORT") or os.getenv("PORT")
+    try:
+        port = int(port_env) if port_env else 58241
+    except Exception:
+        port = 58241
 
     # Update or add PROT in .env
     env_path = os.path.join(os.path.dirname(__file__), '.env')

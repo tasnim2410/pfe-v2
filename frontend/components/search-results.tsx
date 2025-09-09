@@ -484,6 +484,7 @@ const summaryCards = [
   /* centre column second row*/{ id: "innovation",       title: "Innovation Cycle",   description: "Technology lifecycle" },
   /* right column second row*/ { id: "originality",      title: "Originality Rate",   description: "Patent originality" },
   /* full-width last row    */{ id: "summary",          title: "Analysis Summary",   description: "Comprehensive overview" },
+  /* full-width under summary */{ id: "search-history",  title: "Search History",     description: "Recent searches and volumes" },
 ];
 
 // No more mockPatents; using real API results
@@ -497,6 +498,7 @@ import InvestmentDynamic from './investment_dynamic';
 import OriginalityRate from './originality_rate';
 import IpStatsBox from './IPStat';
 import AnalysisSummaryCard from './analysis-summary';
+import SearchHistoryChart from './search_history';
 
 export function SearchResults({ hasSearched, results, papers = [], loading }: SearchResultsProps) {
   const [visibleCards, setVisibleCards] = useState<string[]>([])
@@ -678,6 +680,25 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
               <React.Suspense fallback={<LoadingSpinner text="Loading analysis summary..." size={28} height={60} />}> 
                 <AnalysisSummaryCard />
               </React.Suspense>
+            </CardContent>
+          </Card>
+        )
+      case "search-history":
+        return (
+          <Card className="w-full relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute top-2 right-2 h-6 w-6 p-0 hover:bg-gray-100"
+              onClick={() => hideCard(card.id)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            <CardHeader>
+              <CardTitle>Search History</CardTitle>
+            </CardHeader>
+            <CardContent className="w-full p-2" id={`chart-${card.id}`}>
+              <SearchHistoryChart />
             </CardContent>
           </Card>
         )
@@ -961,7 +982,7 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
           {summaryCards.map((card) => (
             <div
               key={card.id}
-              className={`${card.id === "summary" ? "md:col-span-3" : ""}`}
+              className={`${card.id === "summary" || card.id === "search-history" ? "md:col-span-3" : ""}`}
             >
               {!visibleCards.includes(card.id) ? (
                 <Button
