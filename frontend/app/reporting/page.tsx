@@ -24,6 +24,26 @@ import FamilySizeDistributionChart from "@/components/family-size-distribution"
 import InternationalProtectionMatrixChart from "@/components/international-protection-matrix"
 import InternationalPatentFlowChart from "@/components/international-patent-flow"
 import GeographicalDistribution from "@/components/geographical_distribution"
+// Research charts (used in Trend Analysis > Research tab)
+import ResearchFieldTrends from "@/components/research_field_trends"
+import PublicationsByYear from "@/components/publications_by_year"
+import ThemeByTimeWindow from "@/components/research_evolving_word_cloud"
+import ResearchCooccurenceTrends from "@/components/research_cooccurence_trends"
+import ResearchCitationPercentiles from "@/components/research_citation_percentiles"
+import ResearchCitationsPerYearStats from "@/components/research_citations_per_year_stats"
+import ResearchCitationInequality from "@/components/research_citation_inequality"
+// Dashboard summary cards (used in SearchResults summary tab)
+import IpStatsBox from "@/components/IPStat"
+import OriginalityRate from "@/components/originality_rate"
+import MarketStrategyCard from "@/components/market_strategy"
+import MarketSizeCard from "@/components/market_size"
+import InvestmentDynamic from "@/components/investment_dynamic"
+import { InnovationCycle } from "@/components/innovation-cycle"
+import AnalysisSummaryCard from "@/components/analysis-summary"
+// Forecasting charts
+import PatentPublicationChart from "@/components/filing_vs_publication"
+import ProphetForecast from "@/components/prophet_forecast"
+import LSTMForecastSeries from "@/components/lstm_forecast"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import PptxGenJS from "pptxgenjs"
@@ -39,11 +59,33 @@ const availableCharts = [
   { id: "top-10-keywords", title: "Top 10 Keywords", type: "bar" },
   { id: "patent-field-trends", title: "Patent Field Trends", type: "line" },
   { id: "evolving-word-cloud", title: "Evolving Word Cloud", type: "wordcloud" },
+  { id: "cooccurrence-trends", title: "Co-occurrence Trends", type: "line" },
+  { id: "applicant-collaboration-network", title: "Applicant Collaboration Network", type: "network" },
   { id: "family-member-count", title: "Family Member Count", type: "bar" },
   { id: "family-size-distribution", title: "Family Size Distribution", type: "histogram" },
   { id: "international-protection-matrix", title: "International Protection Matrix", type: "matrix" },
   { id: "international-patent-flow", title: "International Patent Flow", type: "flow" },
   { id: "geographic-distribution", title: "Geographic Distribution", type: "map" },
+  // Research (Scientific)
+  { id: "publications-by-year", title: "Publications by Year", type: "bar" },
+  { id: "research-field-trends", title: "Research Trend by Field", type: "line" },
+  { id: "research-evolving-word-cloud", title: "Evolving Word Cloud (Research)", type: "wordcloud" },
+  { id: "research-cooccurence-trends", title: "Research Co-occurrence Trends", type: "line" },
+  { id: "research-citation-percentiles", title: "Citation Percentiles", type: "distribution" },
+  { id: "research-citations-per-year-stats", title: "Citations per Year (Age-normalized)", type: "stat" },
+  { id: "research-citation-inequality", title: "Citation Inequality", type: "index" },
+  // Dashboard Summary
+  { id: "ipstat", title: "IP Stats", type: "stat" },
+  { id: "originality", title: "Originality Rate", type: "metric" },
+  { id: "innovation", title: "Innovation Cycle", type: "line" },
+  { id: "market-strategy", title: "Market Strategy", type: "insight" },
+  { id: "market-size", title: "Market Size", type: "metric" },
+  { id: "investment", title: "Investment Dynamic", type: "line" },
+  { id: "summary", title: "Analysis Summary", type: "summary" },
+  // Forecasting
+  { id: "prophet-forecast", title: "Prophet Model Forecast", type: "forecast" },
+  { id: "lstm-forecast", title: "LSTM Model Forecast", type: "forecast" },
+  { id: "patent-publications", title: "Patent Filings vs. Publications", type: "line" },
 ]
 
 type Template = {
@@ -153,6 +195,43 @@ const renderChart = (chartId: string | null) => {
       return <InternationalPatentFlowChart />
     case "geographic-distribution":
       return <GeographicalDistribution />
+    // Research (Scientific)
+    case "publications-by-year":
+      return <PublicationsByYear />
+    case "research-field-trends":
+      return <ResearchFieldTrends />
+    case "research-evolving-word-cloud":
+      return <ThemeByTimeWindow />
+    case "research-cooccurence-trends":
+      return <ResearchCooccurenceTrends />
+    case "research-citation-percentiles":
+      return <ResearchCitationPercentiles />
+    case "research-citations-per-year-stats":
+      return <ResearchCitationsPerYearStats />
+    case "research-citation-inequality":
+      return <ResearchCitationInequality />
+    // Dashboard summary
+    case "ipstat":
+      return <IpStatsBox />
+    case "originality":
+      return <OriginalityRate />
+    case "innovation":
+      return <InnovationCycle />
+    case "market-strategy":
+      return <MarketStrategyCard />
+    case "market-size":
+      return <MarketSizeCard />
+    case "investment":
+      return <InvestmentDynamic />
+    case "summary":
+      return <AnalysisSummaryCard />
+    // Forecasting
+    case "prophet-forecast":
+      return <ProphetForecast />
+    case "lstm-forecast":
+      return <LSTMForecastSeries />
+    case "patent-publications":
+      return <PatentPublicationChart />
     default:
       return (
         <div className="flex items-center justify-center h-64">

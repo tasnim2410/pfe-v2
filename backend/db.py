@@ -74,6 +74,46 @@ class SearchKeyword(db.Model):
     
 
 
+class OpsPatent(db.Model):
+    __tablename__ = 'ops_patents'
+    id = db.Column(db.Integer, primary_key=True)
+    search_id = db.Column(db.String(36), nullable=False, index=True)
+    title = db.Column(db.Text, nullable=True)
+    inventors = db.Column(db.Text, nullable=True)
+    applicants = db.Column(db.Text, nullable=True)
+    publication_number = db.Column(db.String(100), nullable=False, index=True)
+    publication_date = db.Column(db.Date, nullable=True)
+    first_filing_year = db.Column(db.Integer, nullable=True)
+    earliest_priority_year = db.Column(db.Integer, nullable=True)
+    ipc = db.Column(db.Text, nullable=True)
+    cpc = db.Column(db.Text, nullable=True)
+    applicant_country = db.Column(db.String(2), nullable=True)
+    family_id = db.Column(db.BigInteger, nullable=True)
+    abstract = db.Column(db.Text, nullable=True)
+    first_publication_number = db.Column(db.String(100), nullable=True)
+    first_publication_country = db.Column(db.String(2), nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'search_id': self.search_id,
+            'title': self.title,
+            'inventors': self.inventors,
+            'applicants': self.applicants,
+            'publication_number': self.publication_number,
+            'publication_date': self.publication_date.isoformat() if self.publication_date else None,
+            'first_filing_year': self.first_filing_year,
+            'earliest_priority_year': self.earliest_priority_year,
+            'ipc': self.ipc,
+            'cpc': self.cpc,
+            'applicant_country': self.applicant_country,
+            'family_id': self.family_id,
+            'abstract': self.abstract,
+            'first_publication_number': self.first_publication_number,
+            'first_publication_country': self.first_publication_country
+        }
+
+
 class ResearchData(db.Model):
     __tablename__ = 'research_data'
     id = db.Column(db.BigInteger, primary_key=True)

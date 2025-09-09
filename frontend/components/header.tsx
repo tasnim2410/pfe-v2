@@ -83,6 +83,8 @@ import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { LoginDialog } from "@/components/login-dialog";
 import { useScrollProgress } from "@/hooks/useScrollProgress";
+import { Sheet, SheetContent, SheetTrigger, SheetClose, SheetTitle } from "@/components/ui/sheet";
+import { Menu } from "lucide-react";
 
 /* ─────────────────────────────────────────
    STYLE CONFIG  (edit these when you need)
@@ -97,7 +99,7 @@ const C = {
   bar:     "block",
   navbar:  "flex items-center justify-between px-6 py-3",
   logoCol: "flex flex-col space-y-1",               // ← new
-  tagline: "text-xs italic text-white",
+  tagline: "hidden sm:block text-xs italic text-white",
   navLink: "px-3 py-2 text-sm font-medium transition-colors hover:text-gray-300",
   navLinkActive: "text-white border-b-2 border-white",
 };
@@ -153,7 +155,7 @@ export function Header() {
             </div>
 
             {/* nav links */}
-            <nav className="flex space-x-6">
+            <nav className="hidden md:flex space-x-6">
               {NAV.map((item) => (
                 <Link
                   key={item.name}
@@ -170,12 +172,12 @@ export function Header() {
           </div>
 
           {/* right: actions */}
-          <div className="flex items-center space-x-4">
-            <Link href="/settings">
+          <div className="hidden md:flex items-center space-x-4">
+          {/* <Link href="/settings">
               <Button variant="ghost" size="sm" className="text-white hover:text-gray-300">
                 Settings
               </Button>
-            </Link>
+            </Link> */}
             <Button
               variant="outline"
               size="sm"
@@ -184,6 +186,63 @@ export function Header() {
             >
               Sign In
             </Button>
+          </div>
+
+          {/* mobile menu */}
+          <div className="md:hidden">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="text-white">
+                  <Menu className="h-6 w-6" />
+                  <span className="sr-only">Open menu</span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="bg-black text-white">
+                <SheetTitle className="sr-only">Main menu</SheetTitle>
+                <div className="mt-2">
+                  <img
+                    src="https://lab-engineering.actia.tn/wp-content/uploads/2021/02/logo-actia.png"
+                    alt="ACTIA Logo"
+                    width={140}
+                    height={60}
+                    className="h-8 object-contain"
+                  />
+                </div>
+                <nav className="mt-6 flex flex-col space-y-2">
+                  {NAV.map((item) => (
+                    <SheetClose asChild key={item.name}>
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          "block px-2 py-2 text-base font-medium rounded hover:bg-white/10",
+                          pathname === item.href ? "text-white" : "text-gray-300"
+                        )}
+                      >
+                        {item.name}
+                      </Link>
+                    </SheetClose>
+                  ))}
+                </nav>
+                <div className="mt-6 border-t border-white/10 pt-4 flex flex-col space-y-2">
+                  <SheetClose asChild>
+                    <Link href="/settings">
+                      <Button variant="ghost" className="justify-start text-white hover:text-gray-300">
+                        Settings
+                      </Button>
+                    </Link>
+                  </SheetClose>
+                  <SheetClose asChild>
+                    <Button
+                      variant="outline"
+                      className="border-white text-white hover:bg-white hover:text-black"
+                      onClick={() => setShowLogin(true)}
+                    >
+                      Sign In
+                    </Button>
+                  </SheetClose>
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
 

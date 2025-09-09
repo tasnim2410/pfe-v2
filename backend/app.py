@@ -110,18 +110,19 @@ from pptx.util import Inches
 import io
 import base64
 from ops_search import json_to_cql, fetch_to_dataframe ,extract_keyword_pairs
-# add near your other imports in app.py
 import numpy as np
-from tensorflow.keras.models import load_model
 from sqlalchemy import text
 from flask import request, jsonify
 import pandas as pd
-import numpy as np
 import os, joblib
 from datetime import date
+import uuid
+from db import RawPatent, SearchKeyword, OpsPatent
 
-# use the SAME feature-engineering as during training
-from lstm2 import create_enhanced_features, _y_inv
+# Local inverse target transform matching training (log1p -> expm1)
+def _y_inv(y):
+    return np.expm1(y)
+
 from growth_rate import compute_patent_growth_from_counts  # past/current growth utils
 import joblib
 from prophet_single_series import (
@@ -137,24 +138,9 @@ from prophet_single_series import (
     compute_patent_growth_from_counts , 
     # to get a DB engine for fetch_current_series
 )
-from tensorflow.keras.models import load_model
-from lstm import build_tech_dataframe, create_sequences_for_tech, _y_inv, fit_scaler_guarded
-from sqlalchemy import text
-import pandas as pd
-from flask import request, jsonify
-import uuid
-from db import RawPatent, SearchKeyword
-import os, joblib
-from tensorflow.keras.models import load_model
-from sqlalchemy import text
-from flask import request, jsonify
-import pandas as pd
-import numpy as np
-import os, joblib
-from datetime import date
-
 # === MUST MATCH TRAINING PIPELINE ===
 from growth_rate import compute_patent_growth_from_counts  # past/current growth helpers
+
 class ServerThread(threading.Thread):
     def __init__(self, app, port):
         threading.Thread.__init__(self)
@@ -462,19 +448,34 @@ def create_app():
             # Debug: log record keys for mapping
             app.logger.debug(f"Record keys: {list(rec.keys())}")
 
-            # First filing year from 'Publication date'
-            pub = rec.get("Publication date")
+            # First filing year: prefer explicit field, else derive from Publication date
             try:
-                pub_dt = datetime.strptime(pub, "%Y%m%d") if pub else None
-                rec["first_filing_year"] = pub_dt.year if pub_dt else None
+                ffy = rec.get("First filing year") or rec.get("first_filing_year")
+                if ffy and str(ffy).isdigit():
+                    rec["first_filing_year"] = int(ffy)
+                else:
+                    pub = rec.get("Publication date")
+                    pub_dt = datetime.strptime(pub, "%Y%m%d") if pub else None
+                    rec["first_filing_year"] = pub_dt.year if pub_dt else None
             except Exception:
                 rec["first_filing_year"] = None
 
             # Earliest priority year: try multiple possible keys
-            prio_raw = rec.get("Earliest priority") or rec.get("Earliest priority date")
+            prio_raw = rec.get("Earliest priority") or rec.get("Earliest priority date") or rec.get("earliest_priority")
             try:
-                prio_dt = datetime.strptime(prio_raw, "%Y-%m-%d") if prio_raw else None
-                rec["earliest_priority_year"] = prio_dt.year if prio_dt else None
+                if prio_raw:
+                    s = str(prio_raw)
+                    # if full date like YYYY-MM-DD
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+                        prio_dt = datetime.strptime(s, "%Y-%m-%d")
+                        rec["earliest_priority_year"] = prio_dt.year
+                    # if only a year like YYYY
+                    elif re.match(r"^\d{4}$", s):
+                        rec["earliest_priority_year"] = int(s)
+                    else:
+                        rec["earliest_priority_year"] = None
+                else:
+                    rec["earliest_priority_year"] = None
             except Exception:
                 rec["earliest_priority_year"] = None
 
@@ -482,17 +483,20 @@ def create_app():
             abstract = rec.get("Abstract") or rec.get("abstract") or rec.get("abstractText")
             rec["abstract"] = abstract
 
-        # Store raw patents including new fields
+        # Store OPS patents into a dedicated table including search_id
         mappings = []
         for r in records:
-            # parse publication_date again for DB
+            # parse publication_date again for DB (as date)
             pub_dt = None
             try:
-                pub_dt = datetime.strptime(r.get("Publication date"), "%Y%m%d")
+                pub_raw = r.get("Publication date")
+                if pub_raw:
+                    pub_dt = datetime.strptime(pub_raw, "%Y%m%d").date()
             except Exception:
-                pass
+                pub_dt = None
 
             mappings.append({
+                "search_id":                search_id,
                 "title":                    r.get("Title"),
                 "inventors":                r.get("Inventors"),
                 "applicants":               r.get("Applicants"),
@@ -501,16 +505,15 @@ def create_app():
                 "ipc":                      r.get("IPC"),
                 "cpc":                      r.get("CPC"),
                 "applicant_country":        r.get("app_country") or r.get("Applicant country"),
-                "family_id":            r.get("Family number"),
+                "family_id":                r.get("Family number") or r.get("family_id"),
                 "first_publication_number": r.get("Publication number"),
-                "first_publication_country": r.get("Publication number", "")[:2],
+                "first_publication_country": (r.get("Publication number") or "")[:2] if r.get("Publication number") else None,
                 "first_filing_year":        r.get("first_filing_year"),
                 "earliest_priority_year":   r.get("earliest_priority_year"),
                 "abstract":                 r.get("abstract"),
             })
 
-        db.session.query(RawPatent).delete()
-        db.session.bulk_insert_mappings(RawPatent, mappings)
+        db.session.bulk_insert_mappings(OpsPatent, mappings)
 
         # Extract & store keywords
         group1 = q_input.get("group1") if isinstance(q_input, dict) else None
@@ -533,10 +536,74 @@ def create_app():
 
 
 
-
-
-
   
+    @app.post('/api/search_ops/history')
+    def get_recent_search_ops_history():
+        """
+        Body: { "limit": <int> } (default 5)
+        Returns the last N unique searches (by search_id) where total_results is not null,
+        along with their keywords and total_results, ordered by recency.
+        """
+        payload = request.get_json(silent=True) or {}
+        limit = int(payload.get('limit', 5))
+        if limit <= 0:
+            return jsonify({"history": []}), 200
+        try:
+            with engine.connect() as connection:
+                latest_rows = connection.execute(
+                    text(
+                        """
+                        WITH latest AS (
+                          SELECT search_id, MAX(id) AS max_id
+                          FROM search_keywords
+                          WHERE total_results IS NOT NULL
+                          GROUP BY search_id
+                        )
+                        SELECT sk.search_id, sk.total_results, sk.id
+                        FROM search_keywords sk
+                        JOIN latest l ON sk.id = l.max_id
+                        ORDER BY sk.id DESC
+                        LIMIT :limit
+                        """
+                    ),
+                    {"limit": limit}
+                ).mappings().all()
+
+                if not latest_rows:
+                    return jsonify({"history": []}), 200
+
+                search_ids = [r["search_id"] for r in latest_rows]
+                keywords_by_sid = {}
+                for sid in search_ids:
+                    kws = connection.execute(
+                        text(
+                            """
+                            SELECT field, keyword
+                            FROM search_keywords
+                            WHERE search_id = :sid
+                            ORDER BY id ASC
+                            """
+                        ),
+                        {"sid": sid}
+                    ).mappings().all()
+                    keywords_by_sid[sid] = [
+                        {"field": k["field"], "keyword": k["keyword"]} for k in kws
+                    ]
+
+                history = []
+                for r in latest_rows:
+                    sid = r["search_id"]
+                    history.append({
+                        "search_id": sid,
+                        "total_results": r["total_results"],
+                        "keywords": keywords_by_sid.get(sid, [])
+                    })
+
+                return jsonify({"limit": limit, "history": history}), 200
+        except Exception as e:
+            return jsonify({"error": f"Failed to fetch recent search history: {str(e)}"}), 500
+
+    
     @app.route('/api/last_search_keywords', methods=['GET'])
     def get_last_search_keywords():
         try:
@@ -4216,6 +4283,46 @@ def create_app():
 
     EPS = 1e-9
 
+    # Local enhanced feature engineering to avoid importing TensorFlow-heavy modules
+    def _create_enhanced_features_local(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Create enhanced features for better model performance with numerical stability.
+        Expects columns: ['year', 'patents', 'publications']
+        """
+        df = df.copy()
+        # Moving averages
+        df['patents_ma3'] = df['patents'].rolling(window=3, min_periods=1).mean()
+        df['publications_ma3'] = df['publications'].rolling(window=3, min_periods=1).mean()
+        # Growth rates clipped
+        df['patents_growth'] = df['patents'].pct_change().fillna(0).clip(-10, 10)
+        df['publications_growth'] = df['publications'].pct_change().fillna(0).clip(-10, 10)
+        # Ratios and interactions with safe division
+        df['patent_pub_ratio'] = df['patents'] / np.maximum(df['publications'], 1e-6)
+        df['patent_pub_ratio'] = np.clip(df['patent_pub_ratio'], 0, 1000)
+        df['total_activity'] = df['patents'] + df['publications']
+        # Lags
+        df['patents_lag1'] = df['patents'].shift(1).fillna(method='bfill').fillna(0)
+        df['publications_lag1'] = df['publications'].shift(1).fillna(method='bfill').fillna(0)
+        # Volatility (rolling std)
+        df['patents_volatility'] = df['patents'].rolling(window=3, min_periods=2).std().fillna(0)
+        df['publications_volatility'] = df['publications'].rolling(window=3, min_periods=2).std().fillna(0)
+        # Trend (slope over rolling window)
+        def _slope(x):
+            n = len(x)
+            if n < 2:
+                return 0.0
+            idx = np.arange(n)
+            # polyfit degree 1 returns slope, intercept
+            try:
+                return float(np.polyfit(idx, x, 1)[0])
+            except Exception:
+                return 0.0
+        df['patents_trend'] = df['patents'].rolling(window=3, min_periods=1).apply(_slope, raw=False)
+        df['publications_trend'] = df['publications'].rolling(window=3, min_periods=1).apply(_slope, raw=False)
+        if 'year' in df.columns:
+            df['year'] = df['year'].astype(int)
+        return df
+
     def _get_int(payload, name, default, minv=None, maxv=None):
         if name in payload:
             try: v = int(str(payload[name]).strip())
@@ -4239,7 +4346,7 @@ def create_app():
         return float(np.mean(((yt[m] - yp[m]) / denom) ** 2) * 100.0)
 
     def _build_enhanced(df_hist):
-        df_enh = create_enhanced_features(df_hist.copy())
+        df_enh = _create_enhanced_features_local(df_hist.copy())
         feature_cols = [
             'patents','publications',
             'patents_ma3','publications_ma3',
@@ -4278,7 +4385,15 @@ def create_app():
             test_years = _get_int(payload, "test_years", 0, 0)
             split_year = payload.get("split_year", request.args.get("split_year"))
             split_year = int(split_year) if split_year not in (None, "", "null") else None
-
+            # Lazy import TensorFlow only when this endpoint is called
+            try:
+                from tensorflow.keras.models import load_model  # type: ignore
+            except Exception as e:
+                return jsonify({
+                    "ok": False,
+                    "error": "TensorFlow not installed or failed to load",
+                    "detail": str(e)
+                }), 501
             # ---- model + scalers (MUST match training) ----
             model_path  = os.path.join("backend/outputs", "lstm_patent_forecaster_enhanced.keras")
             scaler_path = os.path.join("backend/outputs", "global_scalers.pkl")
@@ -4522,7 +4637,15 @@ def create_app():
             test_years = _get_int(payload, "test_years", 0, 0)
             split_year = payload.get("split_year", request.args.get("split_year"))
             split_year = int(split_year) if split_year not in (None, "", "null") else None
-
+            # Lazy import TensorFlow only when this endpoint is called
+            try:
+                from tensorflow.keras.models import load_model  # type: ignore
+            except Exception as e:
+                return jsonify({
+                    "ok": False,
+                    "error": "TensorFlow not installed or failed to load",
+                    "detail": str(e)
+                }), 501
             # ---- model + scalers (MUST match training) ----
             model_path  = os.path.join("backend/outputs", "lstm_patent_forecaster_enhanced_series.keras")
             scaler_path = os.path.join("backend/outputs", "global_scalers.pkl")

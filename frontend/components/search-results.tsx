@@ -609,7 +609,7 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
               <CardTitle>Market Strategy</CardTitle>
             </CardHeader>
             <CardContent className="flex items-center justify-center w-full p-2" id={`chart-${card.id}`}>
-              <MarketStrategyCard level="global"/>
+              <MarketStrategyCard />
             </CardContent>
           </Card>
         )
@@ -630,7 +630,7 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
             </CardHeader>
             <CardContent className="flex items-center justify-center w-full p-2" id={`chart-${card.id}`}>
               <React.Suspense fallback={<LoadingSpinner text="Loading market size..." size={28} height={60} />}>
-                <MarketSizeCard size="big" />
+                <MarketSizeCard  />
               </React.Suspense>
             </CardContent>
           </Card>
