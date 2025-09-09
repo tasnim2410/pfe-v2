@@ -26,6 +26,12 @@ from market_strategy import (
     fetch_legal_raw, parse_legal_json_or_xml,
     classify_member_status, load_gdp_map, compute_msi
 )
+from market_strategy import (
+    load_api_credentials, build_token_cache, get_access_token,
+    fetch_legal_raw, parse_legal_json_or_xml, classify_member_status,
+    load_gdp_map, compute_msi, EP_EXPECTED, WO_EXPECTED
+)
+
 
 import concurrent.futures
 from urllib.parse import quote
@@ -753,6 +759,15 @@ def create_app():
     @app.route('/api/search', methods=['POST'])
     def search_patents():
             query_input = request.get_json()
+
+            # Reset raw_patents before running a new search to avoid mixing results
+            try:
+                # Use TRUNCATE for efficiency and to reset identity; CASCADE in case of FKs
+                with db.engine.begin() as connection:
+                    connection.execute(text("TRUNCATE TABLE raw_patents RESTART IDENTITY CASCADE"))
+            except Exception as e:
+                app.logger.error(f"Failed to truncate raw_patents: {e}")
+                return jsonify({"error": "Failed to reset raw_patents table"}), 500
 
             db_manager = DatabaseManager()
             scraper = EspacenetScraper(
@@ -5076,14 +5091,16 @@ def create_app():
                 except Exception:
                     return 1.0
 
-            # Expected designation distributions (coarse priors) for EP/WO
+            # Expected designation distributions (coarse priors) for EP/WO (OFFLINE ONLY)
+            # Use distinct names to avoid shadowing module-level EP_EXPECTED/WO_EXPECTED
+            # used by the ONLINE path closure.
             # Values sum ~= 1.0 over ISO3 keys
-            EP_EXPECTED: dict = {
+            EP_EXPECTED_OFFLINE: dict = {
                 "DEU": 0.22, "FRA": 0.15, "GBR": 0.15, "ITA": 0.10, "ESP": 0.08,
                 "NLD": 0.07, "SWE": 0.05, "CHE": 0.06, "AUT": 0.04, "DNK": 0.03,
                 "FIN": 0.03, "IRL": 0.02
             }
-            WO_EXPECTED: dict = {
+            WO_EXPECTED_OFFLINE: dict = {
                 "USA": 0.35, "CHN": 0.20, "JPN": 0.15, "KOR": 0.10, "DEU": 0.08,
                 "FRA": 0.06, "GBR": 0.06
             }
@@ -5102,7 +5119,7 @@ def create_app():
 
                 # Determine base expected GDP share
                 if cc2 in ("EP", "WO"):
-                    dist = EP_EXPECTED if cc2 == "EP" else WO_EXPECTED
+                    dist = EP_EXPECTED_OFFLINE if cc2 == "EP" else WO_EXPECTED_OFFLINE
                     exp_gdp = 0.0
                     for iso3_key, w in dist.items():
                         g = iso3_map.get(iso3_key)
@@ -5239,7 +5256,15 @@ def create_app():
                     if cc:
                         status_by_country[cc] = classify_member_status(m)
                 alive_any = any(st in ("GRANTED", "PENDING") for st in status_by_country.values())
-                msi = compute_msi(status_by_country, ISO3_GDP_MAP, US_GDP_VAL)
+                msi = compute_msi(
+                    status_by_country,
+                    ISO3_GDP_MAP,
+                    US_GDP_VAL,
+                    ep_expected=EP_EXPECTED,
+                    wo_expected=WO_EXPECTED,
+                    apply_ep_for_granted=True  # set to False if you want EP distributed only when pending
+                )
+
                 return status_by_country, alive_any, msi
 
             try:
@@ -5341,27 +5366,70 @@ def create_app():
         """
         Aggregate MSI view for dashboard cards.
         Response:
-            { "count": N, "avg_msi": ..., "median_msi": ..., "alive_share_%": ... }
+            {
+              "count": N,
+              "avg_msi": ..., "median_msi": ..., "alive_share_%": ...,
+              "is_full": bool,                # whether every family has MSI
+              "total_families": N_total,
+              "msi_missing": N_missing,
+              "market_strategy_index": ...,   # technology-level MSI (average)
+              "market_strategy_qualification": "Local" | "Main Markets" | "Global"
+            }
 
         Notes for report:
             - avg_msi and median_msi summarize the GDP-weighted protection level per family.
             - alive_share_% is the share of families with at least one GRANTED or PENDING member.
         """
         try:
+            # Compute total families count
+            with engine.connect() as conn:
+                total_families = conn.execute(text("SELECT COUNT(*) FROM raw_patents")).scalar() or 0
+
+            # Fetch only rows with computed MSI for aggregates
             df = pd.read_sql(
                 text("SELECT market_strategy_index, alive_any FROM raw_patents WHERE market_strategy_index IS NOT NULL"),
                 con=engine
             )
+
+            msi_count = int(len(df))
+            is_full = bool(msi_count == int(total_families) and total_families > 0)
+            msi_missing = int(max(total_families - msi_count, 0))
+
             if df.empty:
-                return jsonify({"count": 0, "avg_msi": 0.0, "median_msi": 0.0, "alive_share_%": 0.0})
+                return jsonify({
+                    "count": 0,
+                    "avg_msi": 0.0,
+                    "median_msi": 0.0,
+                    "alive_share_%": 0.0,
+                    "is_full": is_full,
+                    "total_families": int(total_families),
+                    "msi_missing": int(msi_missing),
+                    "market_strategy_index": 0.0,
+                    "market_strategy_qualification": "Local"
+                })
+
             avg_msi = float(df["market_strategy_index"].mean())
             med_msi = float(df["market_strategy_index"].median())
             alive_share = float((df["alive_any"] == True).mean() * 100.0)
+
+            def _qualify(msi: float) -> str:
+                if msi < 0.6:
+                    return "Local"
+                if msi < 0.9:
+                    return "Main Markets"  # 0.6 ≤ msi < 0.9
+                return "Global"            # msi ≥ 0.9
+
             return jsonify({
-                "count": int(len(df)),
+                "count": msi_count,
                 "avg_msi": round(avg_msi, 4),
                 "median_msi": round(med_msi, 4),
-                "alive_share_%": round(alive_share, 2)
+                "alive_share_%": round(alive_share, 2),
+                "is_full": is_full,
+                "total_families": int(total_families),
+                "msi_missing": msi_missing,
+                # Technology-level values for frontend component
+                "market_strategy_index": round(avg_msi, 4),
+                "market_strategy_qualification": _qualify(avg_msi)
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500

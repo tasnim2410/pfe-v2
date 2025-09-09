@@ -15,17 +15,73 @@ const arrowHeight    = 15;
 
 /* ── COMPONENT ─────────────────────────────────────────────────────────── */
 interface Props {
-  /** `local` | `regional` | `global` — defaults to `"regional"` */
-  level?: Level;
+  port?: number;
 }
 
-export const MarketStrategyCard: React.FC<Props> = ({ level = "regional" }) => {
+export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
+  const [level, setLevel] = useState<Level>("regional");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
   /* arrow centre pos */
   const [arrowLeft, setLeft] = useState(0);
 
   /* refs to measure exact cell width */
   const rowRef   = useRef<HTMLDivElement>(null);
   const cellRefs = useRef<HTMLDivElement[]>([]);
+
+  /* Fetch data from APIs */
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+
+        // Resolve backend port: prefer prop if provided, else read from public/backend_port.txt (see publications_by_year.tsx)
+        let portStr: string | undefined = port ? String(port) : undefined;
+        if (!portStr) {
+          try {
+            portStr = (await (await fetch("/backend_port.txt")).text()).trim();
+          } catch (e) {
+            throw new Error("Failed to read backend port");
+          }
+        }
+
+        // First call to legal_status endpoint (ok if it returns success or runs offline)
+        const opsResponse = await fetch(`http://localhost:${portStr}/api/legal_status/ops`);
+        if (!opsResponse.ok) {
+          throw new Error(`Legal status request failed (${opsResponse.status})`);
+        }
+        // Best-effort parse; backend returns { success: true, ... } for both online/offline modes
+        // but we don't hard-require the field here.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const _opsData = await opsResponse.json();
+
+        // Then call to market_strategy summary endpoint
+        const summaryResponse = await fetch(`http://localhost:${portStr}/api/market_strategy/summary`);
+        if (!summaryResponse.ok) {
+          throw new Error(`Market strategy summary request failed (${summaryResponse.status})`);
+        }
+        const summaryData = await summaryResponse.json();
+
+        // Determine level based on average MSI (summary endpoint exposes avg_msi)
+        const avgMsi = Number(summaryData?.avg_msi ?? 0);
+        if (avgMsi < 0.6) {
+          setLevel("local");
+        } else if (avgMsi >= 0.9) {
+          setLevel("global");
+        } else {
+          setLevel("regional");
+        }
+        
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An unknown error occurred');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [port]);
 
   /* calculate arrow whenever level or layout changes */
   useEffect(() => {
@@ -36,6 +92,35 @@ export const MarketStrategyCard: React.FC<Props> = ({ level = "regional" }) => {
       setLeft(offsetLeft + offsetWidth / 2);
     }
   }, [level]);
+
+  if (loading) {
+    return (
+      <div style={{
+        background: "#fff",
+        borderRadius: 18,
+        boxShadow: "0 2px 18px #B2DBA422",
+        padding: "20px",
+        textAlign: "center"
+      }}>
+        Loading market data...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{
+        background: "#fff",
+        borderRadius: 18,
+        boxShadow: "0 2px 18px #B2DBA422",
+        padding: "20px",
+        textAlign: "center",
+        color: "#F14A37"
+      }}>
+        Error: {error}
+      </div>
+    );
+  }
 
   return (
     <div

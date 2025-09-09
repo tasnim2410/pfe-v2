@@ -6,13 +6,11 @@ Utilities for:
 - Classifying per-country patent status (GRANTED / PENDING / DEAD)
 - Loading a country GDP file and computing a Market Strategy Index (MSI)
 
-Drop this file next to your backend app (e.g., backend/market_strategy.py) and import the functions in app.py.
-
-Design notes:
-- We keep functions side-effect free (no Flask imports). Callers pass paths/objs as needed.
-- We implement robust parsing for both OPS JSON and OPS XML payloads.
-- Status rules: kind B* => GRANTED; explicit lapse/withdraw/expired => DEAD; else PENDING.
-- MSI = sum( GDP[country] * weight(status) ) / GDP[USA], weights: {GRANTED:1.0, PENDING:0.6, DEAD:0.0}.
+Spec alignment (Innosabi):
+- Protected = alive applications + any granted patent (either dead or alive)
+- Pending countries get a 40% reduction
+- WO / (pending) EP market size is calculated statistically across authorities
+- Normalize so: US-only grant scores 1.0
 """
 
 from __future__ import annotations
@@ -25,27 +23,19 @@ import requests
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-# Pandas is optional until you load GDP. We import softly.
 try:
     import pandas as pd  # type: ignore
-except Exception:  # pragma: no cover - allow usage without pandas until MSI is needed
+except Exception:
     pd = None  # type: ignore
 
-# -------------------------
-# Constants & Regex helpers
-# -------------------------
-
-# EPO OPS endpoints (defaults; can be overridden via function args)
 TOKEN_URL_DEFAULT = "https://ops.epo.org/3.2/auth/accesstoken"
 LEGAL_URL_DEFAULT = "https://ops.epo.org/3.2/rest-services/legal/publication/docdb/"
 
-# Strong signals that an application is no longer active in that country.
 DEAD_PATTERNS = re.compile(
     r"(LAPS|LAPSE|LAPSED|EXPIRE|EXPIRED|WITHDRAWN|REFUS|REVOK|ABANDON|CEASED)",
     re.IGNORECASE
 )
 
-# Minimal practical WIPO ST.3 (DOCDB) -> ISO3 mapping for GDP lookup.
 ST3_TO_ISO3: Dict[str, Optional[str]] = {
     # Americas
     "US": "USA", "CA": "CAN", "MX": "MEX", "BR": "BRA", "AR": "ARG", "CL": "CHL",
@@ -63,9 +53,21 @@ ST3_TO_ISO3: Dict[str, Optional[str]] = {
     "IL": "ISR", "SA": "SAU", "AE": "ARE", "TR": "TUR",
     # Africa
     "ZA": "ZAF", "EG": "EGY", "MA": "MAR",
-    # Special authorities (not countries)
-    "WO": None,  # PCT publication
-    "EP": None,  # EPO regional publication (handled specially by caller if needed)
+    # Special authorities (not direct countries)
+    "WO": None,  # PCT
+    "EP": None,  # EPO (regional)
+}
+
+# Default statistical distributions (coarse priors) for EP/WO contributions.
+# Values approximately sum to 1.0.
+EP_EXPECTED: Dict[str, float] = {
+    "DEU": 0.22, "FRA": 0.15, "GBR": 0.15, "ITA": 0.10, "ESP": 0.08,
+    "NLD": 0.07, "SWE": 0.05, "CHE": 0.06, "AUT": 0.04, "DNK": 0.03,
+    "FIN": 0.03, "IRL": 0.02
+}
+WO_EXPECTED: Dict[str, float] = {
+    "USA": 0.35, "CHN": 0.20, "JPN": 0.15, "KOR": 0.10, "DEU": 0.08,
+    "FRA": 0.06, "GBR": 0.06
 }
 
 # -------------------------
@@ -80,15 +82,13 @@ def load_api_credentials() -> List[Dict[str, str]]:
       CONSUMER_KEY / CONSUMER_SECRET
       CONSUMER_KEY_0..9 / CONSUMER_SECRET_0..9
     """
-    # Ensure we load the backend/.env that sits next to this file if present.
-    # Fallback to default search (current dir/parents) otherwise.
     try:
         from dotenv import load_dotenv
         here = Path(__file__).resolve()
         candidates = [
-            here.with_name('.env'),                    # backend/.env
-            here.parent.with_name('.env'),             # technology-trend-analysis/.env
-            here.parent.parent.with_name('.env'),      # repo-root .env
+            here.with_name('.env'),
+            here.parent.with_name('.env'),
+            here.parent.parent.with_name('.env'),
         ]
         used_any = []
         for p in candidates:
@@ -98,51 +98,27 @@ def load_api_credentials() -> List[Dict[str, str]]:
                     used_any.append(str(p))
             except Exception:
                 continue
-        # Fallback to default search if none found
         if not used_any:
             load_dotenv(override=True)
-        # Optional diagnostics without exposing secrets
-        if os.getenv("OPS_DEBUG", "0") == "1":
-            keys = sorted([k for k in os.environ.keys() if k.startswith("CONSUMER_KEY")])
-            secs = sorted([k for k in os.environ.keys() if k.startswith("CONSUMER_SECRET")])
-            print({
-                "ops_debug": True,
-                "env_paths_tried": [str(x) for x in candidates],
-                "env_paths_used": used_any,
-                "keys_found": keys,
-                "secrets_found": secs,
-                "key_count": len(keys),
-                "secret_count": len(secs),
-            })
     except Exception:
         pass
 
     creds: List[Dict[str, str]] = []
-
-    # Base pair (optional)
     base_key = os.getenv("CONSUMER_KEY")
     base_sec = os.getenv("CONSUMER_SECRET")
     if base_key and base_sec:
         creds.append({"key": base_key.strip(), "secret": base_sec.strip()})
-
-    # Indexed pairs (optional)
     for i in range(10):
         k = os.getenv(f"CONSUMER_KEY_{i}")
         s = os.getenv(f"CONSUMER_SECRET_{i}")
         if k and s:
             creds.append({"key": k.strip(), "secret": s.strip()})
-
     if not creds:
         raise RuntimeError("No EPO OPS credentials found (.env: CONSUMER_KEY[_i]/CONSUMER_SECRET[_i]).")
     return creds
 
 
-
 def build_token_cache(creds: List[Dict[str, str]]) -> List[Dict[str, float]]:
-    """
-    Build a simple per-credential token cache.
-    Each element holds {"token": str|None, "expiry": float_unix_seconds}.
-    """
     return [{"token": None, "expiry": 0.0} for _ in creds]
 
 
@@ -153,33 +129,19 @@ def get_access_token(
     token_url: str = TOKEN_URL_DEFAULT,
     timeout: int = 15
 ) -> str:
-    """
-    Returns a Bearer token for OPS, using a per-credential cache.
-
-    - cred_idx selects which credential to use (for rotation).
-    - Token cached approx 58 minutes (3500 s).
-
-    Raises:
-        requests.HTTPError if the token request fails.
-    """
     now = time.time()
     info = token_cache[cred_idx]
     if info["token"] and now < info["expiry"]:
         return str(info["token"])
     cred = creds[cred_idx]
-    data = {
-        "grant_type": "client_credentials",
-        "client_id": cred["key"],
-        "client_secret": cred["secret"]
-    }
+    data = {"grant_type": "client_credentials", "client_id": cred["key"], "client_secret": cred["secret"]}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     resp = requests.post(token_url, data=data, headers=headers, timeout=timeout)
     resp.raise_for_status()
     token = resp.json()["access_token"]
     info["token"] = token
-    info["expiry"] = now + 3500  # ~58 minutes
+    info["expiry"] = now + 3500
     return token
-
 
 # -------------------------
 # OPS Legal fetch & parsing
@@ -194,38 +156,17 @@ def fetch_legal_raw(
     token_url: str = TOKEN_URL_DEFAULT,
     timeout: int = 20
 ) -> Tuple[Optional[Any], Optional[str]]:
-    """
-    Fetch OPS 'legal' data for a DOCDB publication number.
-    Tries JSON first (Accept: application/json), falls back to XML if needed.
-
-    Args:
-        publication_number_docdb: e.g., "US.10339814.B2" (DOCDB format). Caller ensures correct formatting.
-        cred_idx: credential index to use (rotate to spread the load).
-        creds, token_cache: objects returned by load_api_credentials() and build_token_cache().
-
-    Returns:
-        (payload_obj, error_msg)
-        - If JSON available, payload_obj is dict.
-        - If only XML available, payload_obj is {"__xml__": "<raw xml text>"}.
-        - On error, payload_obj=None and error_msg contains reason (HTTP code or parse error).
-    """
     token = get_access_token(cred_idx, creds, token_cache, token_url=token_url)
     url = f"{legal_base_url}{requests.utils.quote(str(publication_number_docdb))}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     r = requests.get(url, headers=headers, timeout=timeout)
-    # Forbidden or Not Found: return error
     if r.status_code in (403, 404):
         return None, f"{r.status_code} {r.reason}"
-    # JSON happy path
     if r.headers.get("Content-Type", "").lower().startswith("application/json"):
         try:
             return r.json(), None
         except Exception as e:
             return None, f"JSON parse error: {e}"
-    # Fallback to XML
     if r.ok:
         try:
             return {"__xml__": r.text}, None
@@ -235,31 +176,15 @@ def fetch_legal_raw(
 
 
 def parse_legal_json_or_xml(payload_obj: Any) -> List[Dict[str, Any]]:
-    """
-    Normalize OPS legal payload into a list of per-country members:
-
-    Returns:
-        [
-          {
-            'country': 'US',
-            'kind': 'B2',
-            'events': [{'code': 'MAFP', 'text': '...'}, ...]
-          },
-          ...
-        ]
-    """
     members: List[Dict[str, Any]] = []
-
-    # JSON path (ops:world-patent-data -> ops:patent-family -> ops:family-member[*])
     if payload_obj and "__xml__" not in (payload_obj if isinstance(payload_obj, dict) else {}):
         wpd = payload_obj.get("ops:world-patent-data", {})
         pf  = wpd.get("ops:patent-family", {})
         ms  = pf.get("ops:family-member", [])
-        if isinstance(ms, dict):  # single member case
+        if isinstance(ms, dict):
             ms = [ms]
 
         def _get_text(x):
-            # Some OPS JSON nodes wrap value as {"$": "..."}; accept both plain and wrapped.
             if isinstance(x, dict) and "$" in x:
                 return x.get("$")
             return x
@@ -283,7 +208,6 @@ def parse_legal_json_or_xml(payload_obj: Any) -> List[Dict[str, Any]]:
                     if not le:
                         continue
                     code = le.get("@code")
-                    # L500EP/L510EP contains the human-readable free-text
                     txt = ""
                     l500 = le.get("ops:L500EP", {})
                     if isinstance(l500, dict):
@@ -297,15 +221,12 @@ def parse_legal_json_or_xml(payload_obj: Any) -> List[Dict[str, Any]]:
                 members.append({"country": country, "kind": kind or "", "events": events})
         return members
 
-    # XML path
     xml_txt = payload_obj.get("__xml__") if isinstance(payload_obj, dict) else None
     if not xml_txt:
         return members
-
     root = ET.fromstring(xml_txt)
     ns = {"ops": "http://ops.epo.org", "ex": "http://www.epo.org/exchange"}
     for m in root.findall(".//ops:family-member", ns):
-        # publication-reference/document-id[@document-id-type='docdb']
         country = ""
         kind = ""
         for d in m.findall(".//ex:publication-reference/ex:document-id", ns):
@@ -317,7 +238,6 @@ def parse_legal_json_or_xml(payload_obj: Any) -> List[Dict[str, Any]]:
         events: List[Dict[str, str]] = []
         for le in m.findall(".//ops:legal", ns):
             code = le.get("code")
-            # try to get free text line L510EP
             l510 = le.find(".//ops:L510EP", ns)
             txt  = l510.text if l510 is not None else ""
             events.append({"code": code, "text": txt or ""})
@@ -328,18 +248,14 @@ def parse_legal_json_or_xml(payload_obj: Any) -> List[Dict[str, Any]]:
 
 def classify_member_status(member: Dict[str, Any]) -> str:
     """
-    Heuristic classification for a single family member in a given country.
-
-    Returns:
-        'GRANTED' | 'PENDING' | 'DEAD'
-
+    Returns: 'GRANTED' | 'PENDING' | 'DEAD'
     Rules:
-      - If DOCDB kind starts with 'B' -> GRANTED (counted even if later lapsed).
+      - If DOCDB kind starts with 'B' or 'C' -> GRANTED (count fully, even if later lapsed).
       - Else if any legal text/code matches DEAD_PATTERNS -> DEAD.
       - Else -> PENDING.
     """
     kind = (member.get("kind") or "").upper()
-    if kind.startswith("B"):
+    if kind.startswith(("B", "C")):
         return "GRANTED"
     for ev in member.get("events", []) or []:
         t = f"{ev.get('code', '')}-{ev.get('text', '')}"
@@ -347,50 +263,29 @@ def classify_member_status(member: Dict[str, Any]) -> str:
             return "DEAD"
     return "PENDING"
 
-
 # -------------------------
 # GDP & MSI
 # -------------------------
 
 def load_gdp_map(csv_path: str) -> Tuple[Dict[str, float], float]:
-    """
-    Load a GDP CSV (World Bank-like format) and return:
-      - iso3_to_gdp: dict ISO3 -> latest available GDP (float)
-      - us_gdp: shortcut GDP for USA (float)
-
-    The CSV is expected to have:
-      - a 'Country Code' column (ISO3 codes),
-      - multiple year columns 'YYYY'.
-
-    We take the last year column and forward/back fill if needed.
-    """
     if pd is None:
         raise RuntimeError("pandas is required to load GDP; please install pandas.")
-
-    import pandas as _pd  # local alias to avoid shadowing
-
+    import pandas as _pd
     gdf = _pd.read_csv(csv_path, sep=None, engine="python")
-    # Identify year columns
     year_cols = [c for c in gdf.columns if re.fullmatch(r"\d{4}", str(c))]
     if not year_cols:
         raise ValueError("GDP CSV should contain year columns like 2018, 2019, ...")
-
-    # Use the last chronological year as 'latest'
     year_cols = sorted(year_cols, key=lambda x: int(x))
-    # forward/back fill across years to reduce NaNs; then take last column
     gdf[year_cols] = gdf[year_cols].ffill(axis=1).bfill(axis=1)
     latest_col = year_cols[-1]
-
     iso3_to_gdp: Dict[str, float] = {}
     for iso3, val in zip(gdf["Country Code"], gdf[latest_col]):
         try:
-            # Convert to float; skip NaN or None
             f = float(val)
-            if f == f:  # not NaN
+            if f == f:
                 iso3_to_gdp[str(iso3)] = f
         except Exception:
             continue
-
     us_gdp = iso3_to_gdp.get("USA", 0.0)
     return iso3_to_gdp, us_gdp
 
@@ -400,19 +295,24 @@ def compute_msi(
     iso3_gdp_map: Dict[str, float],
     us_gdp: float,
     st3_to_iso3_map: Dict[str, Optional[str]] = ST3_TO_ISO3,
-    weights: Optional[Dict[str, float]] = None
+    weights: Optional[Dict[str, float]] = None,
+    *,
+    ep_expected: Optional[Dict[str, float]] = None,
+    wo_expected: Optional[Dict[str, float]] = None,
+    apply_ep_for_granted: bool = True
 ) -> float:
     """
-    Compute Market Strategy Index (MSI):
+    MSI = Σ GDP(country) * weight(status) / GDP(USA)
 
-        MSI = sum( GDP[country] * weight(status) ) / GDP[USA]
+    Defaults:
+        weight(GRANTED)=1.0, weight(PENDING)=0.6, weight(DEAD)=0.0
 
-    Default weights:
-        GRANTED: 1.0
-        PENDING: 0.6
-        DEAD:    0.0
-
-    EP/WO are skipped (not countries). Caller may handle EP expansion if desired.
+    EP/WO handling:
+      - If ep_expected / wo_expected are provided, add a distributed contribution:
+            Σ ( GDP[iso3] * p(iso3) * weight(status) )
+        for the corresponding authority (EP or WO).
+      - If not provided, EP/WO are skipped.
+      - Set apply_ep_for_granted=False to only distribute EP when PENDING (strict reading).
     """
     if weights is None:
         weights = {"GRANTED": 1.0, "PENDING": 0.6, "DEAD": 0.0}
@@ -420,10 +320,11 @@ def compute_msi(
     denom = float(us_gdp or 1.0)
     total = 0.0
 
+    # First, add direct national contributions
     for st3, status in (status_by_country or {}).items():
         st3 = (st3 or "").upper()
-        if st3 in ("WO", "EP"):  # not countries -> skip to avoid double counting
-            continue
+        if st3 in ("WO", "EP"):
+            continue  # handled below if distributions provided
         iso3 = st3_to_iso3_map.get(st3)
         if not iso3:
             continue
@@ -431,6 +332,30 @@ def compute_msi(
         if gdp is None:
             continue
         total += float(gdp) * float(weights.get(status, 0.0))
+
+    # EP distributed contribution
+    if "EP" in (status_by_country or {}) and ep_expected:
+        st = status_by_country["EP"]
+        if st != "DEAD" and (apply_ep_for_granted or st == "PENDING"):
+            w = float(weights.get(st, 0.0))
+            ep_sum = 0.0
+            for iso3, p in ep_expected.items():
+                g = iso3_gdp_map.get(iso3)
+                if g is not None:
+                    ep_sum += float(g) * float(p)
+            total += ep_sum * w
+
+    # WO distributed contribution
+    if "WO" in (status_by_country or {}) and wo_expected:
+        st = status_by_country["WO"]
+        if st != "DEAD":  # doc emphasizes pending, but granting at nationals later; we still allow contribution
+            w = float(weights.get(st, 0.0))
+            wo_sum = 0.0
+            for iso3, p in wo_expected.items():
+                g = iso3_gdp_map.get(iso3)
+                if g is not None:
+                    wo_sum += float(g) * float(p)
+            total += wo_sum * w
 
     return total / denom if denom else 0.0
 
@@ -440,6 +365,8 @@ __all__ = [
     "LEGAL_URL_DEFAULT",
     "DEAD_PATTERNS",
     "ST3_TO_ISO3",
+    "EP_EXPECTED",
+    "WO_EXPECTED",
     "load_api_credentials",
     "build_token_cache",
     "get_access_token",
