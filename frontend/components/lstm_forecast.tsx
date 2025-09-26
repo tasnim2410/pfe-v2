@@ -50,13 +50,13 @@ interface HistoryDataPoint {
 
 interface PatentDataPoint {
   count: number;
-  ds: string;
+  ds?: string;
   year: number;
 }
 
 interface PublicationDataPoint {
   count: number;
-  ds: string;
+  ds?: string;
   year: number;
 }
 
@@ -94,10 +94,11 @@ interface ApiResponse {
   };
   history: {
     last_history_year: number;
-    merged: HistoryDataPoint[];
-    patents: PatentDataPoint[];
-    publications: PublicationDataPoint[];
-    years_used_for_model: number[];
+    merged?: HistoryDataPoint[];
+    patents?: PatentDataPoint[];
+    publications?: PublicationDataPoint[];
+    years_used_for_model?: number[];
+    years_used?: number[];
   };
   ok: boolean;
   params: {
@@ -138,7 +139,7 @@ const LSTMForecastSeries: React.FC = () => {
     try {
       const portRes = await fetch('/backend_port.txt');
       const port = (await portRes.text()).trim();
-      const response = await fetch(`http://localhost:${port}/api/lstm_forecast_sereis`, {
+      const response = await fetch(`http://localhost:${port}/api/forecast`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -168,18 +169,29 @@ const LSTMForecastSeries: React.FC = () => {
         // Create a map to store all data points by year
         const dataMap = new Map<number, ChartDataPoint>();
         
-        // Add historical data from merged history
-        result.history.merged.forEach(point => {
+        // Add historical data: prefer history.patents (year/count); fallback to history.merged (year/patents)
+        const histPoints: { year: number; count: number }[] = [];
+        if (Array.isArray(result.history.patents) && result.history.patents.length > 0) {
+          result.history.patents.forEach(p => histPoints.push({ year: p.year, count: p.count }));
+        } else if (Array.isArray(result.history.merged) && result.history.merged.length > 0) {
+          result.history.merged.forEach(m => histPoints.push({ year: m.year, count: m.patents }));
+        }
+
+        histPoints.forEach(point => {
           dataMap.set(point.year, {
             year: point.year,
-            historical: point.patents,
+            historical: point.count,
             type: 'history'
           });
         });
-        
+
         // Get last historical values for connection
-        const lastHistYear = Math.max(...result.history.merged.map(d => d.year));
-        const lastHistValue = result.history.merged.find(d => d.year === lastHistYear)?.patents ?? 0;
+        const lastHistYear = histPoints.length > 0
+          ? Math.max(...histPoints.map(d => d.year))
+          : result.history.last_history_year;
+        const lastHistValue = (histPoints.length > 0
+          ? (histPoints.find(d => d.year === lastHistYear)?.count)
+          : result.evaluation.points?.find(p => p.year === lastHistYear)?.actual) ?? 0;
 
         // Add forecast points with connection point
         const forecastWithConnection = [
@@ -427,7 +439,7 @@ const LSTMForecastSeries: React.FC = () => {
                 <div>
                   Test Years:&nbsp;
                   <span className="tabular-nums">
-                    {apiResponse.evaluation.test_years.join(', ')}
+                    {Array.isArray(apiResponse.evaluation.test_years) ? apiResponse.evaluation.test_years.join(', ') : '—'}
                   </span>
                 </div>
               </div>

@@ -445,9 +445,9 @@ class EspacenetScraper:
         self.driver.get(search_page_url)
         try:
             WebDriverWait(self.driver, 25).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '#application-content > div > nav > div > div.nav__bar__section--center--6Wk6v59n > div > form'))
+                EC.presence_of_element_located((By.CSS_SELECTOR, '#application-content > div:nth-child(1) > div > nav > div > div.nav__bar__section--center--6Wk6v59n > div > form'))
             )
-            search_input = self.driver.find_element(By.CSS_SELECTOR, '#application-content > div > nav > div > div.nav__bar__section--center--6Wk6v59n > div > form > input')
+            search_input = self.driver.find_element(By.CSS_SELECTOR, '#application-content > div:nth-child(1) > div > nav > div > div.nav__bar__section--center--6Wk6v59n > div > form > input')
             search_input.clear()
             search_input.send_keys(query)
             search_input.send_keys(Keys.ENTER)  # Submit the search

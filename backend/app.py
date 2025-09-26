@@ -119,6 +119,30 @@ from datetime import date
 import uuid
 from db import RawPatent, SearchKeyword, OpsPatent
 
+"""
+Data Quality & Lineage (Backend Overview)
+----------------------------------------
+This backend assembles patent data using a dual-path pipeline:
+
+- Espacenet CSV snapshots provide fast, broad coverage and are staged as versioned files.
+- EPO OPS endpoints provide targeted enrichment (families, citations, classifications, legal/register fields).
+
+Lineage and reproducibility:
+- CSV snapshots are preserved on disk (outside of this file). The loader in
+  `backend/scraping_raw_data.py` normalizes and deduplicates rows and computes a content
+  checksum before writing to `raw_patents` (see its `validate_espacenet_df` and
+  `compute_df_checksum`). This enables stable re-runs against the same snapshot.
+
+- For OPS-based searches (this file), each request generates a `search_id` (UUID) and stores
+  both the resulting rows (`ops_patents`) and the parsed query keywords (`search_keywords`).
+  This provides end-to-end provenance: which keywords produced which result set, with
+  `total_results` recorded. The API logs `search_id`, row counts, and timing to aid audits.
+
+Quota and resilience:
+- OPS calls are batched where possible and cached upstream. If OPS is slow/unavailable,
+  the system can retain CSV results and re-queue enrichment later.
+"""
+
 # Local inverse target transform matching training (log1p -> expm1)
 def _y_inv(y):
     return np.expm1(y)
@@ -4311,8 +4335,8 @@ def create_app():
         df['patent_pub_ratio'] = np.clip(df['patent_pub_ratio'], 0, 1000)
         df['total_activity'] = df['patents'] + df['publications']
         # Lags
-        df['patents_lag1'] = df['patents'].shift(1).fillna(method='bfill').fillna(0)
-        df['publications_lag1'] = df['publications'].shift(1).fillna(method='bfill').fillna(0)
+        df['patents_lag1'] = df['patents'].shift(1).bfill().fillna(0)
+        df['publications_lag1'] = df['publications'].shift(1).bfill().fillna(0)
         # Volatility (rolling std)
         df['patents_volatility'] = df['patents'].rolling(window=3, min_periods=2).std().fillna(0)
         df['publications_volatility'] = df['publications'].rolling(window=3, min_periods=2).std().fillna(0)
@@ -4380,11 +4404,13 @@ def create_app():
     def _upsert_counts(df_counts, year, value):
         df = df_counts.copy()
         if (df['year'] == year).any():
+            df['patent_count'] = df['patent_count'].astype(float)
             df.loc[df['year'] == year, 'patent_count'] = float(value)
         else:
             df = pd.concat([df, pd.DataFrame([{'year': int(year), 'patent_count': float(value)}])], ignore_index=True)
         return df.sort_values('year').reset_index(drop=True)
 
+    @app.route('/api/forecast', methods=['GET', 'POST'])
     @app.route('/api/lstm_forecast', methods=['GET', 'POST'])
     def lstm_forecast():
         try:
@@ -4582,6 +4608,12 @@ def create_app():
                 }
             
 
+            # Build simple history counts for patents to drive frontend historical line
+            pats_history_counts = [
+                {"year": int(r.year), "count": int(r.patents)}
+                for r in pat_counts.itertuples(index=False)
+            ]
+
             return jsonify({
                 "ok": True,
                 "params": {
@@ -4597,7 +4629,8 @@ def create_app():
                 },
                 "history": {
                     "years_used": years_all,
-                    "last_history_year": y_max
+                    "last_history_year": y_max,
+                    "patents": pats_history_counts
                 },
                 "evaluation": {
                     "test_years": test_years_list if split_year is not None or test_years > 0 else [],

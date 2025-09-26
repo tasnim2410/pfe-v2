@@ -57,11 +57,11 @@ const analysisCards = {
   research: [
     
     { id: "research-cooccurence-trends", title: "Co-occurrence Trends" },
-    { id: "research-citation-percentiles", title: "Citation Percentiles" },
+    // { id: "research-citation-percentiles", title: "Citation Percentiles" },
     { id: "research-citations-per-year-stats", title: "Citations per Year (Age-normalized)" },    
     { id: "publications-by-year", title: "Publications by Year" },
     { id: "research-evolving-word-cloud", title: "Evolving Word Cloud" },
-    { id: "research-citation-inequality", title: "Citation Inequality" },
+    // { id: "research-citation-inequality", title: "Citation Inequality" },
     // { id: "research-topic-shift-trend", title: "Topic Shift Trend" },
     { id: "research-field-trends", title: "Research Trend by Field" },
     
