@@ -75,21 +75,51 @@ export const TopIPCCodes: React.FC = () => {
   if (!data)    return null;  // should not happen, but type-safe guard
 
   /* ------------- Prepare data for Chart.js ------------- */
-  const cleanLabels = data.labels.map(stripLabel);  // sanitised X-axis keys
+  /* Aggregate duplicates: strip codes and sum patent counts for same code */
+  const aggregatedData: Record<string, number> = {};
+  const rawLabels: string[] = data.labels;
+  const rawCounts: number[] = data.datasets[0]?.data || [];
+
+  rawLabels.forEach((label: string, idx: number) => {
+    const cleanCode = stripLabel(label);
+    const count = rawCounts[idx] || 0;
+    aggregatedData[cleanCode] = (aggregatedData[cleanCode] || 0) + count;
+  });
+
+  /* Sort by count descending and take top 10 */
+  const sortedEntries = Object.entries(aggregatedData)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const cleanLabels = sortedEntries.map(([code]) => code);
+  const aggregatedCounts = sortedEntries.map(([, count]) => count);
+
+  /* Use total patents from database (returned by API) */
+  const totalPatents = data.total_patents || aggregatedCounts.reduce((sum, count) => sum + count, 0);
 
   /* Create lookup: { "H01M": { ipc_code, title, explanation, count } } */
-  const ipcInfoMap: Record<string, any> = Object.fromEntries(
-    data.ipc_info.map((info: any) => [stripLabel(info.ipc_code), { ...info }])
-  );
+  const ipcInfoMap: Record<string, any> = {};
+  if (data.ipc_info) {
+    data.ipc_info.forEach((info: any) => {
+      const cleanCode = stripLabel(info.ipc_code);
+      if (!ipcInfoMap[cleanCode]) {
+        ipcInfoMap[cleanCode] = { ...info };
+      }
+      // Update count with aggregated value if available
+      if (aggregatedData[cleanCode]) {
+        ipcInfoMap[cleanCode].count = aggregatedData[cleanCode];
+      }
+    });
+  }
 
   const chartData = {
     labels: cleanLabels,
-    datasets: data.datasets.map((ds: any) => ({
-      ...ds,
+    datasets: [{
+      data: aggregatedCounts,
       backgroundColor: IPC_COLORS,
       borderRadius: 12,
       borderWidth: 0
-    }))
+    }]
   };
 
   /* ------------- Chart options ------------- */
@@ -208,6 +238,10 @@ export const TopIPCCodes: React.FC = () => {
           {/* count is returned by the backend as part of each ipc_info item */}
           <p style={{ margin: "4px 0" }}>
             <strong>Patent count:</strong> {selectedInfo.count}
+          </p>
+
+          <p style={{ margin: "4px 0" }}>
+            <strong>Percentage:</strong> {((selectedInfo.count / totalPatents) * 100).toFixed(1)}%
           </p>
         </div>
       )}

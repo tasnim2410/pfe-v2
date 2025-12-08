@@ -32,7 +32,7 @@ from market_strategy import (
     load_gdp_map, compute_msi, EP_EXPECTED, WO_EXPECTED
 )
 
-
+from db import db, Cost, PatentCost
 import concurrent.futures
 from urllib.parse import quote
 from dotenv import load_dotenv
@@ -119,36 +119,14 @@ from datetime import date
 import uuid
 from db import RawPatent, SearchKeyword, OpsPatent
 
-"""
-Data Quality & Lineage (Backend Overview)
-----------------------------------------
-This backend assembles patent data using a dual-path pipeline:
-
-- Espacenet CSV snapshots provide fast, broad coverage and are staged as versioned files.
-- EPO OPS endpoints provide targeted enrichment (families, citations, classifications, legal/register fields).
-
-Lineage and reproducibility:
-- CSV snapshots are preserved on disk (outside of this file). The loader in
-  `backend/scraping_raw_data.py` normalizes and deduplicates rows and computes a content
-  checksum before writing to `raw_patents` (see its `validate_espacenet_df` and
-  `compute_df_checksum`). This enables stable re-runs against the same snapshot.
-
-- For OPS-based searches (this file), each request generates a `search_id` (UUID) and stores
-  both the resulting rows (`ops_patents`) and the parsed query keywords (`search_keywords`).
-  This provides end-to-end provenance: which keywords produced which result set, with
-  `total_results` recorded. The API logs `search_id`, row counts, and timing to aid audits.
-
-Quota and resilience:
-- OPS calls are batched where possible and cached upstream. If OPS is slow/unavailable,
-  the system can retain CSV results and re-queue enrichment later.
-"""
-
 # Local inverse target transform matching training (log1p -> expm1)
 def _y_inv(y):
     return np.expm1(y)
 
 from growth_rate import compute_patent_growth_from_counts  # past/current growth utils
 import joblib
+from tensorflow.keras.models import load_model
+from lstm_enhanced import create_enhanced_features
 from prophet_single_series import (
     run_for_current_series,
     fetch_current_series,
@@ -570,6 +548,7 @@ def create_app():
         along with their keywords and total_results, ordered by recency.
         """
         payload = request.get_json(silent=True) or {}
+
         limit = int(payload.get('limit', 5))
         if limit <= 0:
             return jsonify({"history": []}), 200
@@ -588,10 +567,8 @@ def create_app():
                         FROM search_keywords sk
                         JOIN latest l ON sk.id = l.max_id
                         ORDER BY sk.id DESC
-                        LIMIT :limit
                         """
-                    ),
-                    {"limit": limit}
+                    )
                 ).mappings().all()
 
                 if not latest_rows:
@@ -615,16 +592,34 @@ def create_app():
                         {"field": k["field"], "keyword": k["keyword"]} for k in kws
                     ]
 
-                history = []
+                seen = set()
+                unique_history = []
+                
                 for r in latest_rows:
                     sid = r["search_id"]
-                    history.append({
-                        "search_id": sid,
-                        "total_results": r["total_results"],
-                        "keywords": keywords_by_sid.get(sid, [])
-                    })
+                    total_results = r["total_results"]
+                    keywords = keywords_by_sid.get(sid, [])
+                    
+                    # Create a hashable signature: sorted keywords + total_results
+                    keywords_signature = frozenset(
+                        (kw["field"], kw["keyword"]) for kw in keywords
+                    )
+                    signature = (keywords_signature, total_results)
+                    
+                    # Only add if we haven't seen this exact combination before
+                    if signature not in seen:
+                        seen.add(signature)
+                        unique_history.append({
+                            "search_id": sid,
+                            "total_results": total_results,
+                            "keywords": keywords
+                        })
+                        
+                        # Stop once we have enough unique results
+                        if len(unique_history) >= limit:
+                            break
 
-                return jsonify({"limit": limit, "history": history}), 200
+                return jsonify({"limit": limit, "history": unique_history, "total_unique": len(unique_history)}), 200
         except Exception as e:
             return jsonify({"error": f"Failed to fetch recent search history: {str(e)}"}), 500
 
@@ -2249,35 +2244,46 @@ def create_app():
             
     @app.route('/api/market_cost', methods=['POST'])
     def update_costs():
+        """
+        Updates patent costs based on country and age information.
+        Returns statistics about the cost updates.
+        """
         try:
             # Step 1: Ensure Cost table is populated
             if Cost.query.count() == 0:
                 csv_path = os.path.join(os.path.dirname(__file__), 'corrected-patent-cost-data.csv')
                 if not os.path.exists(csv_path):
-                    return jsonify({"error": "CSV file not found"}), 404
-                cost = pd.read_csv(csv_path)
-                cost.columns = [
-                'Country',   
-                'Years 0.0-1.5',
-                'Years 2.0-4.5',
-                'Years 5.0-9.5',
-                'Years 10.0-14.5',
-                'Years 15.0-20.0',
-                'Total Cost (US$)'
+                    app.logger.error(f"Cost CSV file not found at: {csv_path}")
+                    return jsonify({"error": "Cost data file not found"}), 404
+                
+                try:
+                    cost = pd.read_csv(csv_path)
+                    cost.columns = [
+                    'Country',   
+                    'Years 0.0-1.5',
+                    'Years 2.0-4.5',
+                    'Years 5.0-9.5',
+                    'Years 10.0-14.5',
+                    'Years 15.0-20.0',
+                    'Total Cost (US$)'
                 ]
-                updated_cost = update_cost_df(cost)
-                rename_dict = {
-                'Years 0.0-1.5': 'Years_0_1_5',
-                'Years 2.0-4.5': 'Years_2_4_5',
-                'Years 5.0-9.5': 'Years_5_9_5',
-                'Years 10.0-14.5': 'Years_10_14_5',
-                'Years 15.0-20.0': 'Years_15_20',
-                'Total Cost (US$)': 'Total_cost'
+                    updated_cost = update_cost_df(cost)
+                    rename_dict = {
+                    'Years 0.0-1.5': 'Years_0_1_5',
+                    'Years 2.0-4.5': 'Years_2_4_5',
+                    'Years 5.0-9.5': 'Years_5_9_5',
+                    'Years 10.0-14.5': 'Years_10_14_5',
+                    'Years 15.0-20.0': 'Years_15_20',
+                    'Total Cost (US$)': 'Total_cost'
                 }
-                updated_cost.rename(columns=rename_dict, inplace=True)
-                for _, row in updated_cost.iterrows():
-                    new_cost = Cost(
-                        Country=row['Country'],
+                    updated_cost.rename(columns=rename_dict, inplace=True)
+                
+                # Delete existing records before inserting new ones
+                    Cost.query.delete()
+                
+                    for _, row in updated_cost.iterrows():
+                        new_cost = Cost(
+                            Country=row['Country'],
                         Years_0_1_5=row['Years_0_1_5'],
                         Years_2_4_5=row['Years_2_4_5'],
                         Years_5_9_5=row['Years_5_9_5'],
@@ -2285,42 +2291,67 @@ def create_app():
                         Years_15_20=row['Years_15_20'],
                         Total_cost=row['Total_cost']
                     )
-                    db.session.add(new_cost)
-                db.session.commit()
+                        db.session.add(new_cost)
+                    db.session.commit()
+                except Exception as e:
+                    app.logger.error(f"Error loading cost data: {str(e)}")
+                    return jsonify({"error": f"Failed to load cost data: {str(e)}"}), 500
 
-            # Step 2: Load cost data
-            cost_df = pd.read_sql('SELECT * FROM costs', db.engine)
+        # Step 2: Load cost data
+            try:
+                cost_df = pd.read_sql('SELECT * FROM costs', db.engine)
+            except Exception as e:
+                app.logger.error(f"Error reading costs table: {str(e)}")
+                return jsonify({"error": "Failed to read cost data"}), 500
 
-            # Step 3: Fetch patent data into a DataFrame
-            query = 'SELECT "earliest_priority_year", "first_publication_country" FROM raw_patents'
-            patent_df = pd.read_sql(query, db.engine)
+        # Step 3: Fetch patent data
+            try:
+                query = 'SELECT "earliest_priority_year", "first_publication_country" FROM raw_patents'
+                patent_df = pd.read_sql(query, db.engine)
+            except Exception as e:
+                app.logger.error(f"Error reading patent data: {str(e)}")
+                return jsonify({"error": "Failed to read patent data"}), 500
 
             # Step 4: Calculate patent age
             patent_df = calculate_age(patent_df)
 
-            # Step 5: Assign cost to each patent
+        # Step 5: Assign cost to each patent
             patent_df['cost'] = patent_df.apply(lambda row: assign_cost(row, cost_df), axis=1)
 
-            # Step 6: Clear existing patent_costs and save new data
-            db.session.query(PatentCost).delete()
-            db.session.commit()
-            for _, row in patent_df.iterrows():
-                if pd.notnull(row['Patent Age']) and pd.notnull(row['cost']):
-                    patent_cost = PatentCost(
-                        patent_age=str(row['Patent Age']),
+        # Step 6: Clear existing patent_costs and save new data
+            try:
+                PatentCost.query.delete()
+            
+                for _, row in patent_df.iterrows():
+                    if pd.notnull(row['Patent Age']) and pd.notnull(row['cost']):
+                        patent_cost = PatentCost(
+                            patent_age=str(row['Patent Age']),
                         country=row['first_publication_country'],
                         cost=row['cost']
                     )
-                    db.session.add(patent_cost)
-            db.session.commit()
+                        db.session.add(patent_cost)
+                db.session.commit()
 
-            return jsonify({"message": "Patent costs updated successfully"}), 200
+                stats = {
+                    "total_patents": len(patent_df),
+                    "costs_assigned": len(patent_df[pd.notnull(patent_df['cost'])]),
+                "total_cost": float(patent_df['cost'].sum())
+            }
+            
+                return jsonify({
+                    "message": "Patent costs updated successfully",
+                    "statistics": stats
+            }), 200
+
+            except Exception as e:
+                db.session.rollback()
+                app.logger.error(f"Error saving patent costs: {str(e)}")
+                return jsonify({"error": f"Failed to save patent costs: {str(e)}"}), 500
 
         except Exception as e:
             db.session.rollback()
             app.logger.error(f"Error in update_costs: {str(e)}")
             return jsonify({"error": str(e)}), 500
-        
         
         
 
@@ -2383,31 +2414,60 @@ def create_app():
             import pandas as pd
             patents_df = pd.DataFrame(patents)
             cost_df = pd.DataFrame(costs)
+            
+            print(f"[market_metrics] Patents loaded: {len(patents_df)}")
+            print(f"[market_metrics] Costs loaded: {len(cost_df)}")
+            
             # Defensive: If either is empty, return zeros
             if patents_df.empty or cost_df.empty:
+                print(f"[market_metrics] WARNING: Empty dataframe - patents: {len(patents_df)}, costs: {len(cost_df)}")
                 return jsonify({
                 'market_value': 0.0,
                 'market_rate': 0.0,
-                'mean_value': 0.0
+                'mean_value': 0.0,
+                'debug': {
+                    'patents_count': len(patents_df),
+                    'costs_count': len(cost_df),
+                    'reason': 'Empty dataframe'
+                }
             }), 200
+            
             # Ensure 'Patent Age' column exists
             if 'Patent Age' not in patents_df.columns:
                 from datetime import datetime
                 current_year = datetime.now().year
                 patents_df['Patent Age'] = current_year - patents_df['earliest_priority_year']
+            
+            # Debug: Check for null values
+            null_countries = patents_df['first_publication_country'].isnull().sum()
+            null_ages = patents_df['Patent Age'].isnull().sum()
+            print(f"[market_metrics] Null countries: {null_countries}, Null ages: {null_ages}")
+            
             # Compute metrics
             market_value, market_rate, mean_value = get_market_metrics(patents_df, cost_df)
+            
+            print(f"[market_metrics] Results - MV: {market_value}, MR: {market_rate}, Mean: {mean_value}")
+            
             return jsonify({
                 'market_value': float(market_value),
                 'market_rate': float(market_rate),
-                'mean_value': float(mean_value)
+                'mean_value': float(mean_value),
+                'debug': {
+                    'patents_count': len(patents_df),
+                    'costs_count': len(cost_df),
+                    'null_countries': int(null_countries),
+                    'null_ages': int(null_ages)
+                }
             }), 200
         except Exception as e:
+            print(f"[market_metrics] ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return jsonify({'error': str(e)}), 500
 
 
 
-            
+
             
              
 
@@ -2730,6 +2790,81 @@ def create_app():
         })
     
     
+    @app.route('/api/family_size/stats', methods=['GET'])
+    def get_family_size_stats():
+        """
+        Returns total family size and mean family size across all patents.
+        If family_members column is not populated, triggers the OPS endpoint to populate it first.
+        """
+        try:
+            # Check if family_members data exists
+            query = text("""
+                SELECT COUNT(*) as total_patents,
+                       COUNT(CASE WHEN family_members IS NOT NULL AND array_length(family_members, 1) > 0 THEN 1 END) as populated_count
+                FROM raw_patents
+            """)
+            
+            with engine.connect() as conn:
+                result = conn.execute(query).fetchone()
+                total_patents = result[0]
+                populated_count = result[1]
+            
+            # If less than 50% of patents have family_members populated, trigger the OPS update
+            if total_patents > 0 and (populated_count / total_patents) < 0.5:
+                # Call the existing family_members/ops endpoint internally
+                try:
+                    # Import the function or call it via internal request
+                    # For simplicity, we'll return a message asking to populate first
+                    return jsonify({
+                        'success': False,
+                        'message': 'Family members data is not sufficiently populated. Please call /api/family_members/ops first.',
+                        'populated_percentage': round((populated_count / total_patents) * 100, 2),
+                        'total_patents': total_patents,
+                        'populated_patents': populated_count
+                    }), 202  # 202 Accepted - action required
+                except Exception as e:
+                    return jsonify({'error': f'Failed to trigger family update: {str(e)}'}), 500
+            
+            # Calculate family size statistics
+            stats_query = text("""
+                SELECT 
+                    SUM(array_length(family_members, 1)) as total_family_members,
+                    AVG(array_length(family_members, 1)) as mean_family_size,
+                    COUNT(*) as patents_with_family_data,
+                    MIN(array_length(family_members, 1)) as min_family_size,
+                    MAX(array_length(family_members, 1)) as max_family_size
+                FROM raw_patents
+                WHERE family_members IS NOT NULL 
+                  AND array_length(family_members, 1) > 0
+            """)
+            
+            with engine.connect() as conn:
+                stats_result = conn.execute(stats_query).fetchone()
+                
+                if stats_result is None or stats_result[0] is None:
+                    return jsonify({
+                        'success': True,
+                        'total_family_members': 0,
+                        'mean_family_size': 0,
+                        'patents_with_family_data': 0,
+                        'min_family_size': 0,
+                        'max_family_size': 0,
+                        'message': 'No family members data available'
+                    }), 200
+                
+                return jsonify({
+                    'success': True,
+                    'total_family_members': int(stats_result[0]) if stats_result[0] else 0,
+                    'mean_family_size': round(float(stats_result[1]), 2) if stats_result[1] else 0,
+                    'patents_with_family_data': int(stats_result[2]) if stats_result[2] else 0,
+                    'min_family_size': int(stats_result[3]) if stats_result[3] else 0,
+                    'max_family_size': int(stats_result[4]) if stats_result[4] else 0,
+                    'populated_percentage': round((populated_count / total_patents) * 100, 2) if total_patents > 0 else 0
+                }), 200
+                
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
     
     # @app.route('/api/family_members/ops', methods=['POST'])
     # def update_family_members_ops():
@@ -2900,15 +3035,26 @@ def create_app():
                 con=db.engine,
                 columns=['id', 'applicant_name']
             )
-            # Count top 10 applicants
-            top10 = df['applicant_name'].value_counts().head(10)
+            # Count applicants
+            all_counts = df['applicant_name'].value_counts()
+            top10 = all_counts.head(10)
+            top100 = all_counts.head(100)
+            
+            # Calculate percentage of top 10 out of top 100
+            top10_total = top10.sum()
+            top100_total = top100.sum()
+            percentage = (top10_total / top100_total * 100) if top100_total > 0 else 0
+            
             result = {
                 'labels': top10.index.tolist(),
                 'datasets': [{
                     'label': 'Patent Count',
                     'data': top10.values.tolist(),
                     'backgroundColor': 'rgba(255, 99, 132, 0.7)'
-                }]
+                }],
+                'top10_total': int(top10_total),
+                'top100_total': int(top100_total),
+                'percentage': round(percentage, 1)
             }
             return jsonify(result), 200
         except Exception as e:
@@ -2967,6 +3113,9 @@ def create_app():
                     'title': meaning.get('title', ''),
                     'explanation': meaning.get('explanation', '')
                 })
+            # Get total number of patents in database
+            total_patents = RawPatent.query.count()
+
             result = {
                 'labels': main_ipc_df['Main IPC'].tolist(),
                 'datasets': [{
@@ -2974,7 +3123,8 @@ def create_app():
                     'data': main_ipc_df['Count'].tolist(),
                     'backgroundColor': 'rgba(153, 50, 204, 0.7)'
                 }],
-                'ipc_info': ipc_info
+                'ipc_info': ipc_info,
+                'total_patents': total_patents
             }
             return jsonify(result), 200
         except Exception as e:
@@ -3266,8 +3416,12 @@ def create_app():
                 .fillna(0)
             )
 
-        # ── 5️⃣  Row order: receivers sorted by total (desc)  ──────────
-            pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=False).index]
+        # ── 5️⃣  Filter out rows (receivers) with zero total patents
+            row_totals = pivot.sum(axis=1)
+            pivot = pivot.loc[row_totals > 0]
+
+        # ── 6️⃣  Row order: receivers sorted by total (asc) - smaller at top, bigger at bottom
+            pivot = pivot.loc[pivot.sum(axis=1).sort_values(ascending=True).index]
 
         #      Column order: origins sorted by overall total (desc) so
         #      biggest source stacks appear first (bottom of each bar)
@@ -4317,46 +4471,6 @@ def create_app():
 
     EPS = 1e-9
 
-    # Local enhanced feature engineering to avoid importing TensorFlow-heavy modules
-    def _create_enhanced_features_local(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create enhanced features for better model performance with numerical stability.
-        Expects columns: ['year', 'patents', 'publications']
-        """
-        df = df.copy()
-        # Moving averages
-        df['patents_ma3'] = df['patents'].rolling(window=3, min_periods=1).mean()
-        df['publications_ma3'] = df['publications'].rolling(window=3, min_periods=1).mean()
-        # Growth rates clipped
-        df['patents_growth'] = df['patents'].pct_change().fillna(0).clip(-10, 10)
-        df['publications_growth'] = df['publications'].pct_change().fillna(0).clip(-10, 10)
-        # Ratios and interactions with safe division
-        df['patent_pub_ratio'] = df['patents'] / np.maximum(df['publications'], 1e-6)
-        df['patent_pub_ratio'] = np.clip(df['patent_pub_ratio'], 0, 1000)
-        df['total_activity'] = df['patents'] + df['publications']
-        # Lags
-        df['patents_lag1'] = df['patents'].shift(1).bfill().fillna(0)
-        df['publications_lag1'] = df['publications'].shift(1).bfill().fillna(0)
-        # Volatility (rolling std)
-        df['patents_volatility'] = df['patents'].rolling(window=3, min_periods=2).std().fillna(0)
-        df['publications_volatility'] = df['publications'].rolling(window=3, min_periods=2).std().fillna(0)
-        # Trend (slope over rolling window)
-        def _slope(x):
-            n = len(x)
-            if n < 2:
-                return 0.0
-            idx = np.arange(n)
-            # polyfit degree 1 returns slope, intercept
-            try:
-                return float(np.polyfit(idx, x, 1)[0])
-            except Exception:
-                return 0.0
-        df['patents_trend'] = df['patents'].rolling(window=3, min_periods=1).apply(_slope, raw=False)
-        df['publications_trend'] = df['publications'].rolling(window=3, min_periods=1).apply(_slope, raw=False)
-        if 'year' in df.columns:
-            df['year'] = df['year'].astype(int)
-        return df
-
     def _get_int(payload, name, default, minv=None, maxv=None):
         if name in payload:
             try: v = int(str(payload[name]).strip())
@@ -4380,7 +4494,7 @@ def create_app():
         return float(np.mean(((yt[m] - yp[m]) / denom) ** 2) * 100.0)
 
     def _build_enhanced(df_hist):
-        df_enh = _create_enhanced_features_local(df_hist.copy())
+        df_enh = create_enhanced_features(df_hist.copy())
         feature_cols = [
             'patents','publications',
             'patents_ma3','publications_ma3',
@@ -4404,13 +4518,11 @@ def create_app():
     def _upsert_counts(df_counts, year, value):
         df = df_counts.copy()
         if (df['year'] == year).any():
-            df['patent_count'] = df['patent_count'].astype(float)
             df.loc[df['year'] == year, 'patent_count'] = float(value)
         else:
             df = pd.concat([df, pd.DataFrame([{'year': int(year), 'patent_count': float(value)}])], ignore_index=True)
         return df.sort_values('year').reset_index(drop=True)
 
-    @app.route('/api/forecast', methods=['GET', 'POST'])
     @app.route('/api/lstm_forecast', methods=['GET', 'POST'])
     def lstm_forecast():
         try:
@@ -4421,15 +4533,7 @@ def create_app():
             test_years = _get_int(payload, "test_years", 0, 0)
             split_year = payload.get("split_year", request.args.get("split_year"))
             split_year = int(split_year) if split_year not in (None, "", "null") else None
-            # Lazy import TensorFlow only when this endpoint is called
-            try:
-                from tensorflow.keras.models import load_model  # type: ignore
-            except Exception as e:
-                return jsonify({
-                    "ok": False,
-                    "error": "TensorFlow not installed or failed to load",
-                    "detail": str(e)
-                }), 501
+
             # ---- model + scalers (MUST match training) ----
             model_path  = os.path.join("backend/outputs", "lstm_patent_forecaster_enhanced.keras")
             scaler_path = os.path.join("backend/outputs", "global_scalers.pkl")
@@ -4608,12 +4712,6 @@ def create_app():
                 }
             
 
-            # Build simple history counts for patents to drive frontend historical line
-            pats_history_counts = [
-                {"year": int(r.year), "count": int(r.patents)}
-                for r in pat_counts.itertuples(index=False)
-            ]
-
             return jsonify({
                 "ok": True,
                 "params": {
@@ -4629,8 +4727,7 @@ def create_app():
                 },
                 "history": {
                     "years_used": years_all,
-                    "last_history_year": y_max,
-                    "patents": pats_history_counts
+                    "last_history_year": y_max
                 },
                 "evaluation": {
                     "test_years": test_years_list if split_year is not None or test_years > 0 else [],
@@ -4670,35 +4767,49 @@ def create_app():
         
         
 
-    @app.route('/api/lstm_forecast_sereis', methods=['GET', 'POST'])
+    @app.route('/api/lstm_forecast_series', methods=['GET', 'POST'])
     def lstm_forecast_series():
+        import traceback
         try:
+            print("[LSTM] Starting LSTM forecast endpoint...")
             payload    = request.get_json(silent=True) or {}
+            print(f"[LSTM] Payload received: {payload}")
+            
             horizon    = _get_int(payload, "horizon",   5, 1)
             pat_trunc  = _get_int(payload, "pat_trunc", 0, 0)
             pub_trunc  = _get_int(payload, "pub_trunc", 0, 0)
             test_years = _get_int(payload, "test_years", 0, 0)
             split_year = payload.get("split_year", request.args.get("split_year"))
             split_year = int(split_year) if split_year not in (None, "", "null") else None
-            # Lazy import TensorFlow only when this endpoint is called
-            try:
-                from tensorflow.keras.models import load_model  # type: ignore
-            except Exception as e:
-                return jsonify({
-                    "ok": False,
-                    "error": "TensorFlow not installed or failed to load",
-                    "detail": str(e)
-                }), 501
+            print(f"[LSTM] Parameters: horizon={horizon}, pat_trunc={pat_trunc}, pub_trunc={pub_trunc}, test_years={test_years}")
+
             # ---- model + scalers (MUST match training) ----
-            model_path  = os.path.join("backend/outputs", "lstm_patent_forecaster_enhanced_series.keras")
-            scaler_path = os.path.join("backend/outputs", "global_scalers.pkl")
+            # Get the directory where app.py is located
+            import inspect
+            current_file = inspect.getfile(inspect.currentframe())
+            backend_dir = os.path.dirname(os.path.abspath(current_file))
+            model_path  = os.path.join(backend_dir, "outputs", "lstm_patent_forecaster_enhanced_series.keras")
+            scaler_path = os.path.join(backend_dir, "outputs", "global_scalers.pkl")
+            print(f"[LSTM] Backend directory: {backend_dir}")
+            print(f"[LSTM] Loading model from: {model_path}")
+            print(f"[LSTM] Model file exists: {os.path.exists(model_path)}")
+            
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            if not os.path.exists(scaler_path):
+                raise FileNotFoundError(f"Scaler file not found: {scaler_path}")
+                
             model   = load_model(model_path)
+            print(f"[LSTM] Model loaded successfully")
+            
             scalers = joblib.load(scaler_path)
+            print(f"[LSTM] Scalers loaded successfully")
             x_scaler = scalers["x_scaler"] if isinstance(scalers, dict) else scalers.x_scaler
             y_scaler = scalers["y_scaler"] if isinstance(scalers, dict) else scalers.y_scaler
 
             # infer step length from saved model
             n_steps = int((model.input_shape[1] if isinstance(model.input_shape, (list, tuple)) else 5) or 5)
+            print(f"[LSTM] Inferred step length: {n_steps}")
 
             # ---- fetch DB data ----
             with engine.connect() as conn:
@@ -4935,26 +5046,21 @@ def create_app():
             }), 200
 
         except Exception as e:
-            return jsonify({"ok": False, "error": str(e)}), 500
+            error_trace = traceback.format_exc()
+            error_msg = str(e)
+            print(f"\n{'='*60}")
+            print(f"[LSTM ERROR] Exception occurred: {error_msg}")
+            print(f"[LSTM ERROR] Full traceback:")
+            print(error_trace)
+            print(f"{'='*60}\n")
+            return jsonify({
+                "ok": False, 
+                "error": error_msg,
+                "error_type": type(e).__name__,
+                "traceback": error_trace
+            }), 500
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-    
-    
-    
+
     @app.route('/api/patents/yearly_counts', methods=['GET'])
     def get_patent_yearly_counts():
         """

@@ -63,23 +63,48 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
   if (error)   return <div style={{ color: "#EA3C53" }}>{error}</div>;
   if (!api)    return null;
 
+  /* ----- Filter to top 10 receivers by total patents ----- */
+  const rowTotals = api.receivers.map((_, rowIdx) => 
+    api.matrix[rowIdx]?.reduce((sum, val) => sum + val, 0) ?? 0
+  );
+  
+  // Get indices sorted by total (descending), take top 10
+  const sortedIndices = api.receivers
+    .map((_, idx) => idx)
+    .filter(idx => rowTotals[idx] > 0)
+    .sort((a, b) => rowTotals[a] - rowTotals[b])  // ascending for bottom-to-top display
+    .slice(-10);  // take top 10 (last 10 after ascending sort)
+  
+  const filteredReceivers = sortedIndices.map(idx => api.receivers[idx]);
+  const filteredMatrix = sortedIndices.map(idx => api.matrix[idx]);
+
   /* ----- chart.js datasets ----- */
   const datasets = api.origins.map((origin, col) => ({
     label: origin,
-    data : api.receivers.map((_, row) => api.matrix[row]?.[col] ?? 0),
+    data : filteredReceivers.map((_, row) => filteredMatrix[row]?.[col] ?? 0),
     backgroundColor: color(col),
     borderWidth: 0,
   }));
 
-  const data = { labels: api.receivers, datasets };
+  const data = { labels: filteredReceivers, datasets };
 
   const options: any = {
     indexAxis: "y" as const,
     responsive: true,
     maintainAspectRatio: false,
     scales: {
-      x: { stacked: true, title: { display: true, text: "Total Patents Received" }, ticks:{ color:"#3B3C3D"} },
-      y: { stacked: true, title: { display: true, text: "Receiving Country" }, ticks:{ color:"#3B3C3D", font:{ weight:600 } } },
+      x: { 
+        stacked: true, 
+        reverse: true,  // Bars grow from right to left (mirror of protection matrix)
+        title: { display: true, text: "Total Patents Received" }, 
+        ticks: { color: "#3B3C3D" } 
+      },
+      y: { 
+        stacked: true, 
+        position: "right",  // Y-axis labels on the right side
+        title: { display: true, text: "Receiving Country" }, 
+        ticks: { color: "#3B3C3D", font: { weight: 600 } } 
+      },
     },
     plugins: {
       tooltip: {

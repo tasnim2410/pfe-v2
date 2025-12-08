@@ -68,16 +68,31 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
   if (error)   return <div style={{ color: "#EA3C53" }}>{error}</div>;
   if (!api)    return null;
 
+  /* ----- Filter to top 10 origins by total filings ----- */
+  const rowTotals = api.origins.map((_, rowIdx) => 
+    api.matrix[rowIdx]?.reduce((sum, val) => sum + val, 0) ?? 0
+  );
+  
+  // Get indices sorted by total (ascending for bottom-to-top display), take top 10
+  const sortedIndices = api.origins
+    .map((_, idx) => idx)
+    .filter(idx => rowTotals[idx] > 0)
+    .sort((a, b) => rowTotals[a] - rowTotals[b])  // ascending for bottom-to-top display
+    .slice(-10);  // take top 10 (last 10 after ascending sort)
+  
+  const filteredOrigins = sortedIndices.map(idx => api.origins[idx]);
+  const filteredMatrix = sortedIndices.map(idx => api.matrix[idx]);
+
   /* ---------- build chart.js structures ---------- */
   const datasets = api.filings.map((filing, colIdx) => ({
     label: filing,
-    data : api.origins.map((_, rowIdx) => api.matrix[rowIdx]?.[colIdx] ?? 0),
+    data : filteredOrigins.map((_, rowIdx) => filteredMatrix[rowIdx]?.[colIdx] ?? 0),
     backgroundColor: colourFor(colIdx),
     borderWidth: 0,
   }));
 
   const data = {
-    labels: api.origins,   // y-axis
+    labels: filteredOrigins,   // y-axis
     datasets,
   };
 
@@ -95,7 +110,7 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
         },
       },
       legend: {
-        position: "right",
+        position: "left",
         labels: { boxWidth: 14 },
       },
     },

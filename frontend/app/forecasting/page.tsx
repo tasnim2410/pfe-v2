@@ -22,9 +22,10 @@ import ArimaxQuadraticClient from "@/components/arimax_quadratic_client";
 import LSTMForecastSeries from "@/components/lstm_forecast";
 
 const forecastingCards = [
-  { id: "prophet-forecast", title: "Prophet Model Forecast" },
-  { id: "lstm-forecast", title: "LSTM Model Forecast" },
+  // { id: "prophet-forecast", title: "Prophet Model Forecast" },
   { id: "patent-publications", title: "Patent Filings vs. Publications" },
+  { id: "lstm-forecast", title: "LSTM Model Forecast" },
+ 
   // { id: "forecasted-trends", title: "Forecasted Patent & Publication Trends" },
 ]
 export default function Forecasting() {

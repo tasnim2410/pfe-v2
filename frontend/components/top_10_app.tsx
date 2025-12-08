@@ -56,7 +56,12 @@ export const Top10Applicants: React.FC = () => {
 const options = {
   indexAxis: 'y' as const,
   responsive: true,
-  maintainAspectRatio: false,    
+  maintainAspectRatio: false,
+  layout: {
+    padding: {
+      left: 20
+    }
+  },
   plugins: {
     legend: { display: false },
     title: { display: false },
@@ -69,12 +74,41 @@ const options = {
   scales: {
     x: {
       beginAtZero: true,
-      ticks: { color: "#232526", font: { size: 14, weight: 700 } },  // <--- weight as a number
+      ticks: { color: "#232526", font: { size: 12, weight: 600 } },
       grid: { color: "#eee" }
     },
     y: {
-      ticks: { color: "#232526", font: { size: 14, weight: 700 } },  // <--- weight as a number
-      grid: { color: "#fff" }
+      ticks: { 
+        color: "#232526", 
+        font: { size: 10, weight: 500 },
+        autoSkip: false,
+        maxRotation: 0,
+        minRotation: 0,
+        callback: function(value: any, index: number) {
+          const label = (this as any).getLabelForValue(value);
+          if (label && label.length > 37) {
+            // Split into multiple lines at ~37 chars
+            const words = label.split(' ');
+            const lines: string[] = [];
+            let currentLine = '';
+            for (const word of words) {
+              if ((currentLine + ' ' + word).trim().length <= 37) {
+                currentLine = (currentLine + ' ' + word).trim();
+              } else {
+                if (currentLine) lines.push(currentLine);
+                currentLine = word;
+              }
+            }
+            if (currentLine) lines.push(currentLine);
+            return lines;
+          }
+          return label;
+        }
+      },
+      grid: { color: "#fff" },
+      afterFit: (scaleInstance: any) => {
+        scaleInstance.width = 320;
+      }
     }
   }
 };
@@ -85,8 +119,8 @@ return (
     background: "#fff",
     borderRadius: 18,
     boxShadow: "0 2px 18px #B2DBA422",
-    padding: 32,
-    minWidth: 400,
+    padding: 5,
+    minWidth: 600,
     width: "fit-content",
     maxWidth: "100%",
     display: "flex",
@@ -95,9 +129,23 @@ return (
     minHeight: 340,
     margin: "0 auto"
   }}>
-    <div style={{ width: 400, height: 340, overflow: "visible" }}>
+    <div style={{ width: 650, height: 420, overflow: "visible" }}>
       <Bar data={chartData} options={options} />
     </div>
+    {data.percentage !== undefined && (
+      <div style={{
+        marginTop: 12,
+        padding: "8px 16px",
+        background: "#f5f5f5",
+        borderRadius: 8,
+        fontSize: 13,
+        color: "#555",
+        textAlign: "center"
+      }}>
+        Top 10 applicants represent <strong>{data.percentage}%</strong> of the top 100 applicants 
+        ({data.top10_total} out of {data.top100_total} patents)
+      </div>
+    )}
   </div>
 );
 };
