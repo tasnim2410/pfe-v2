@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
-
+from sqlalchemy import Column, Integer, Boolean, Float, String, Text, DateTime
+from sqlalchemy.sql import func
 # Initialize SQLAlchemy
 # In your app, import `db` and call db.init_app(app)
 db = SQLAlchemy()
@@ -504,6 +505,47 @@ class ResearchDivergence(db.Model):
     divergence = db.Column(db.Float, nullable=False)
 
         
+
+
+class LegalXML(db.Model):
+    __tablename__ = "legal_xml"
+
+    id = Column(Integer, primary_key=True)
+    publication_number = Column(String(64), nullable=False, index=True)
+    xml = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+class EpoEventCode(db.Model):
+    __tablename__ = "epo_event_code"
+    id = Column(Integer, primary_key=True)
+    authority = Column(String(64), nullable=False)
+    event_code = Column(String(64), nullable=False)
+    influence = Column(String(5), nullable=True, default="")
+    description_eng = Column(Text, nullable=True)
+    description_ori = Column(Text, nullable=True)
+    event_class = Column(String(5), nullable=True)
+    event_class_description = Column(Text, nullable=True)
+    mapped_status = Column(String(64), nullable=False)
+    is_granted = Column(Boolean, nullable=False)
+
+
+class MarketStrategy(db.Model):
+    __tablename__ = "market_strategy"
+
+    id = Column(Integer, primary_key=True)
+    publication_number = Column(String(64), nullable=False, index=True, unique=True)
+    family_members = db.Column(db.ARRAY(db.String(100)), nullable=True)
+    family_jurisdictions = db.Column(db.ARRAY(db.String(2)), nullable=True)
+    legal_status = Column(String(64), nullable=True)
+    is_granted = Column(Boolean, nullable=True)
+    market_strategy_index = Column(Float, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+
+               
         
 # class PatentOPS(db.Model):
 #     __tablename__ = "patent_ops"

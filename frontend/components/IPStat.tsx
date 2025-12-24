@@ -65,7 +65,12 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
           })
           .then((familyRes) => {
             if (!familyRes || !familyRes.ok) throw new Error(`Family members HTTP ${familyRes?.status}`);
-            // After both DB updates, fetch metrics
+            // Then call /api/legal_status/ops to compute alive_any and market_strategy_index
+            return fetch(`http://localhost:${trimmedPort}/api/legal_status/ops`, { method: 'POST' });
+          })
+          .then((legalRes) => {
+            if (!legalRes || !legalRes.ok) throw new Error(`Legal status HTTP ${legalRes?.status}`);
+            // After all DB updates, fetch metrics
             return fetch(`http://localhost:${trimmedPort}/api/market_metrics`)
               .then((metricsRes) => {
                 if (!metricsRes.ok) throw new Error(`Metrics HTTP ${metricsRes.status}`);

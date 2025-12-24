@@ -1,6 +1,3 @@
-
-
-
 import React, { useEffect, useState } from "react";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -29,6 +26,8 @@ export const ApplicantTypePie: React.FC = () => {
   const [err, setErr] = useState<string | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; perc: number } | null>(null);
+  const [showGeneralComment, setShowGeneralComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
 
   /** ───────────────────────── data fetch ─────────────────────────── */
   useEffect(() => {
@@ -104,6 +103,36 @@ export const ApplicantTypePie: React.FC = () => {
         onMouseLeave={() => { setHoverIdx(null); setTooltip(null); }}   
       >
         <svg width={220} height={220} viewBox="0 0 220 220">{arcs}</svg>
+        
+        {/* Info icon for general comment */}
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            width: 20,
+            height: 20,
+            borderRadius: "50%",
+            backgroundColor: "#f0f0f0",
+            border: "1px solid #ccc",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            fontSize: "12px",
+            fontWeight: "bold",
+            color: "#666",
+            zIndex: 10
+          }}
+          onMouseEnter={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setCommentPosition({ x: rect.left, y: rect.bottom });
+            setShowGeneralComment(true);
+          }}
+          onMouseLeave={() => setShowGeneralComment(false)}
+        >
+          i
+        </div>
 
         {tooltip && (
           <div style={{
@@ -135,7 +164,7 @@ export const ApplicantTypePie: React.FC = () => {
 
   /** ────────────────────────── render  ───────────────────────────── */
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
       {/* Pie + legend row */}
       <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
         <PieChart percentages={summary.percentages} labels={summary.labels} />
@@ -167,6 +196,50 @@ export const ApplicantTypePie: React.FC = () => {
           Co-applicant rate:&nbsp;
           <strong>{coapplicant.coapplicant_rate.toFixed(2)}%</strong>&nbsp;
           ({coapplicant.coapplicant_count} / {coapplicant.total_applications})
+        </div>
+      )}
+
+      {/* General Comment Block (on hover) */}
+      {showGeneralComment && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 200,
+            top: commentPosition.y + 5,
+            width: 250,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.4"
+          }}
+          onMouseEnter={() => setShowGeneralComment(true)}
+          onMouseLeave={() => setShowGeneralComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            📊 Analysis Comment
+          </div>
+          <div style={{ color: "#555" }}>
+            {/* REPLACE THIS COMMENT WITH YOUR CONTENT */}
+            This chart shows the distribution of applicant types in our system. 
+            The largest segment represents individual applicants, followed by 
+            corporate entities. The co-applicant rate indicates how frequently 
+            applications include multiple parties.
+            {/* END OF REPLACEABLE CONTENT */}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Tip:</strong> Hover over pie segments for detailed percentages
+          </div>
         </div>
       )}
     </div>

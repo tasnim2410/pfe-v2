@@ -22,6 +22,7 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
   const [level, setLevel] = useState<Level>("regional");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [msiValue, setMsiValue] = useState<number | null>(null); // Added state for MSI value
   
   /* arrow centre pos */
   const [arrowLeft, setLeft] = useState(0);
@@ -29,42 +30,98 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
   /* refs to measure exact cell width */
   const rowRef   = useRef<HTMLDivElement>(null);
   const cellRefs = useRef<HTMLDivElement[]>([]);
+  
+  /* Refs to prevent double fetching and abort ongoing requests */
+  const hasFetchedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   /* Fetch data from APIs */
   useEffect(() => {
+    // Prevent double calls in Strict Mode
+    if (hasFetchedRef.current) {
+      return;
+    }
+    
+    // Cancel any existing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // Create new AbortController
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+    
     const fetchData = async () => {
       try {
+        hasFetchedRef.current = true;
         setLoading(true);
+        setError(null);
 
-        // Resolve backend port: prefer prop if provided, else read from public/backend_port.txt (see publications_by_year.tsx)
+        // Resolve backend port
         let portStr: string | undefined = port ? String(port) : undefined;
         if (!portStr) {
           try {
-            portStr = (await (await fetch("/backend_port.txt")).text()).trim();
+            const portResponse = await fetch("/backend_port.txt", { signal });
+            if (signal.aborted) return;
+            portStr = (await portResponse.text()).trim();
           } catch (e) {
+            if (signal.aborted) return;
             throw new Error("Failed to read backend port");
           }
         }
 
-        // First call to legal_status endpoint (ok if it returns success or runs offline)
-        const opsResponse = await fetch(`http://localhost:${portStr}/api/legal_status/ops`);
+        // First: fetch/update legal XML
+        const opsResponse = await fetch(
+          `http://localhost:${portStr}/api/legal_status/fetch_xml`,
+          { signal }
+        );
+        if (signal.aborted) return;
+        
         if (!opsResponse.ok) {
           throw new Error(`Legal status request failed (${opsResponse.status})`);
         }
-        // Best-effort parse; backend returns { success: true, ... } for both online/offline modes
-        // but we don't hard-require the field here.
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const _opsData = await opsResponse.json();
 
-        // Then call to market_strategy summary endpoint
-        const summaryResponse = await fetch(`http://localhost:${portStr}/api/market_strategy/summary`);
+        // Second: load patent statuses into market_strategy table
+        const loadResponse = await fetch(
+          `http://localhost:${portStr}/api/market_strategy/load_from_legal_xml`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+            signal
+          }
+        );
+        if (signal.aborted) return;
+        
+        if (!loadResponse.ok) {
+          throw new Error(`Market strategy load request failed (${loadResponse.status})`);
+        }
+        const loadData = await loadResponse.json();
+        
+        // Expected format: { success, total, inserted, updated }
+        if (!loadData || loadData.success !== true) {
+          throw new Error('Market strategy load did not complete successfully');
+        }
+
+        // Third: compute MSI and get summary
+        const summaryResponse = await fetch(
+          `http://localhost:${portStr}/api/market_strategy/compute_market_strategy`,
+          { signal }
+        );
+        if (signal.aborted) return;
+        
         if (!summaryResponse.ok) {
           throw new Error(`Market strategy summary request failed (${summaryResponse.status})`);
         }
         const summaryData = await summaryResponse.json();
 
-        // Determine level based on average MSI (summary endpoint exposes avg_msi)
-        const avgMsi = Number(summaryData?.avg_msi ?? 0);
+        // Determine level based on MSI and store value
+        const avgMsi = Number(
+          summaryData?.technology_msi ?? summaryData?.avg_msi ?? 0
+        );
+        setMsiValue(avgMsi);
+        
         if (avgMsi < 0.6) {
           setLevel("local");
         } else if (avgMsi >= 0.9) {
@@ -74,13 +131,29 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         }
         
       } catch (err) {
+        // Don't set error if request was aborted
+        if (signal.aborted) return;
+        
+        // Reset the fetch flag on error so it can retry
+        hasFetchedRef.current = false;
+        
         setError(err instanceof Error ? err.message : 'An unknown error occurred');
       } finally {
-        setLoading(false);
+        // Only update loading state if not aborted
+        if (!signal.aborted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchData();
+
+    // Cleanup function
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [port]);
 
   /* calculate arrow whenever level or layout changes */
@@ -237,6 +310,27 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         Current level:&nbsp;
         <span style={{ color: "#BDD248", fontWeight: 700 }}>
           {level.toUpperCase()}
+        </span>
+      </div>
+
+      {/* Display MSI Value */}
+      <div
+        style={{
+          marginTop: 8,
+          padding: "8px 16px",
+          background: "#F5F7FA",
+          borderRadius: 8,
+          fontSize: 14,
+          fontWeight: 600,
+          color: "#232526",
+          textAlign: "center",
+          width: "100%",
+          boxSizing: "border-box",
+        }}
+      >
+        Market Strategy Index:&nbsp;
+        <span style={{ color: "#BDD248", fontWeight: 800 }}>
+          {msiValue !== null ? msiValue.toFixed(2) : "N/A"}
         </span>
       </div>
     </div>

@@ -6,17 +6,17 @@ import LoadingSpinner from "./LoadingSpinner";
 const STAGES = [
   {
     label: "Emerging",
-    color: "#D8EDC0",
+    color: "#cdff95ff",
     range: [-Infinity, 10],
   },
   {
     label: "Beginning",
-    color: "#C7E6A0",
+    color: "#b4e678ff",
     range: [10, 20],
   },
   {
     label: "Ongoing",
-    color: "#92CF4D",
+    color: "#39d908de",
     range: [20, 30],
   },
   {
@@ -225,26 +225,40 @@ export const InnovationCycle: React.FC = () => {
       <div style={{
         display: "flex", flexDirection: "row", gap: 12, marginTop: 3, flexWrap: "wrap", justifyContent: "center",
       }}>
-        {STAGES.map((stage) => (
-          <div key={stage.label} style={{ display: "flex", alignItems: "center", gap: 5, margin: "2px 0" }}>
-            <div style={{
-              width: 17, height: 8,
-              background: stage.color,
-              borderRadius: 5,
-              opacity: 0.99,
-              border: "1.1px solid #eee",
-              boxShadow: "0 1px 2px #eee"
-            }} />
-            <span style={{
-              color: "#232526",
-              fontSize: 13.5,
-              fontWeight: 600,
-              textShadow: "0 1px 1px #fff7"
-            }}>{stage.label}</span>
-          </div>
-        ))}
+        {STAGES.map((stage) => {
+          const isActive = activeStage.label === stage.label;
+          return (
+            <div key={stage.label} style={{ 
+              display: "flex", 
+              alignItems: "center", 
+              gap: 6, 
+              margin: "2px 0",
+              padding: isActive ? "4px 8px" : "4px 0",
+              background: isActive ? "#f8f9fa" : "transparent",
+              borderRadius: isActive ? 8 : 0,
+              boxShadow: isActive ? "0 2px 6px rgba(0,0,0,0.1)" : "none",
+              transition: "all 0.3s ease"
+            }}>
+              <div style={{
+                width: isActive ? 20 : 17, 
+                height: isActive ? 20 : 8,
+                background: stage.color,
+                borderRadius: isActive ? "50%" : 5,
+                opacity: 0.99,
+                border: isActive ? `2px solid ${stage.color}` : "1.1px solid #eee",
+                boxShadow: isActive ? "0 2px 4px rgba(0,0,0,0.2)" : "0 1px 2px #eee",
+                transition: "all 0.3s ease"
+              }} />
+              <span style={{
+                color: isActive ? "#232526" : "#232526",
+                fontSize: isActive ? 14.5 : 13.5,
+                fontWeight: isActive ? 700 : 600,
+                textShadow: "0 1px 1px #fff7"
+              }}>{stage.label}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
-

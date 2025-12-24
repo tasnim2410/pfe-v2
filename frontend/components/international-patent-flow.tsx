@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   Chart,
   BarElement,
@@ -8,7 +8,7 @@ import {
   Legend,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
-import { schemeTableau10, schemeSet3 } from "d3-scale-chromatic";
+import { colorForCountry } from "../lib/country-colors";
 
 /* register once */
 Chart.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend);
@@ -20,17 +20,16 @@ interface ApiResponse {
   matrix: number[][];   // receiver x origin
 }
 
-/* ----- colour helper (enough unique colours) ----- */
-const PALETTE = [...schemeTableau10, ...schemeSet3].flat();
-const color = (i: number) => PALETTE[i % PALETTE.length];
+/* ----- colour helper provided via shared lib (country-colors) ----- */
 
 /* ---------- component ---------- */
 export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
   port: overridePort,
 }) => {
-  const [api, setApi]     = useState<ApiResponse | null>(null);
+  const [api, setApi] = useState<ApiResponse | null>(null);
   const [loading, setLoad] = useState(true);
-  const [error, setErr]   = useState<string | null>(null);
+  const [error, setErr] = useState<string | null>(null);
+  const [hiddenReceivers, setHiddenReceivers] = useState<Set<string>>(new Set());
 
   /* ─ fetch once ─ */
   useEffect(() => {
@@ -41,8 +40,8 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
         let port = overridePort;
         if (!port) {
           const txt = await fetch("/backend_port.txt").then(r => r.text()).catch(() => "");
-          const n   = parseInt(txt.trim(), 10);
-          port      = Number.isFinite(n) ? n : 49473;
+          const n = parseInt(txt.trim(), 10);
+          port = Number.isFinite(n) ? n : 49473;
         }
 
         /* 2️⃣ data */
@@ -59,34 +58,72 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
     return () => { dead = true; };
   }, [overridePort]);
 
-  if (loading) return <div>Loading international patent flow…</div>;
-  if (error)   return <div style={{ color: "#EA3C53" }}>{error}</div>;
-  if (!api)    return null;
-
   /* ----- Filter to top 10 receivers by total patents ----- */
-  const rowTotals = api.receivers.map((_, rowIdx) => 
-    api.matrix[rowIdx]?.reduce((sum, val) => sum + val, 0) ?? 0
-  );
-  
-  // Get indices sorted by total (descending), take top 10
-  const sortedIndices = api.receivers
-    .map((_, idx) => idx)
-    .filter(idx => rowTotals[idx] > 0)
-    .sort((a, b) => rowTotals[a] - rowTotals[b])  // ascending for bottom-to-top display
-    .slice(-10);  // take top 10 (last 10 after ascending sort)
-  
-  const filteredReceivers = sortedIndices.map(idx => api.receivers[idx]);
-  const filteredMatrix = sortedIndices.map(idx => api.matrix[idx]);
+  const { filteredReceivers, filteredMatrix, allReceivers } = useMemo(() => {
+    if (!api) return { filteredReceivers: [], filteredMatrix: [], allReceivers: [] };
+    
+    const rowTotals = api.receivers.map((_, rowIdx) => 
+      api.matrix[rowIdx]?.reduce((sum, val) => sum + val, 0) ?? 0
+    );
+    
+    // Get indices sorted by total (descending), take top 10
+    const sortedIndices = api.receivers
+      .map((_, idx) => idx)
+      .filter(idx => rowTotals[idx] > 0)
+      .sort((a, b) => rowTotals[a] - rowTotals[b])  // ascending for bottom-to-top display
+      .slice(-10);  // take top 10 (last 10 after ascending sort)
+    
+    const filteredReceivers = sortedIndices.map(idx => api.receivers[idx]);
+    const filteredMatrix = sortedIndices.map(idx => api.matrix[idx]);
+    
+    return {
+      filteredReceivers,
+      filteredMatrix,
+      allReceivers: api.receivers,
+    };
+  }, [api]);
+
+  /* ----- Filter receivers based on hidden state ----- */
+  const visibleReceiverIndices = useMemo(() => {
+    return filteredReceivers
+      .map((receiver, index) => ({ receiver, index }))
+      .filter(({ receiver }) => !hiddenReceivers.has(receiver))
+      .map(({ index }) => index);
+  }, [filteredReceivers, hiddenReceivers]);
+
+  const visibleReceivers = visibleReceiverIndices.map(idx => filteredReceivers[idx]);
+
+  /* ----- Toggle receiver visibility ----- */
+  const toggleReceiver = (receiver: string) => {
+    setHiddenReceivers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(receiver)) {
+        newSet.delete(receiver);
+      } else {
+        newSet.add(receiver);
+      }
+      return newSet;
+    });
+  };
+
+  /* ----- Reset all filters ----- */
+  const resetFilters = () => {
+    setHiddenReceivers(new Set());
+  };
 
   /* ----- chart.js datasets ----- */
-  const datasets = api.origins.map((origin, col) => ({
-    label: origin,
-    data : filteredReceivers.map((_, row) => filteredMatrix[row]?.[col] ?? 0),
-    backgroundColor: color(col),
-    borderWidth: 0,
-  }));
+  const datasets = useMemo(() => {
+    if (!api) return [];
+    
+    return api.origins.map((origin, col) => ({
+      label: origin,
+      data: visibleReceiverIndices.map(rowIdx => filteredMatrix[rowIdx]?.[col] ?? 0),
+      backgroundColor: colorForCountry(origin),
+      borderWidth: 0,
+    }));
+  }, [api, filteredMatrix, visibleReceiverIndices]);
 
-  const data = { labels: filteredReceivers, datasets };
+  const data = { labels: visibleReceivers, datasets };
 
   const options: any = {
     indexAxis: "y" as const,
@@ -95,13 +132,13 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
     scales: {
       x: { 
         stacked: true, 
-        reverse: true,  // Bars grow from right to left (mirror of protection matrix)
+        reverse: true,
         title: { display: true, text: "Total Patents Received" }, 
         ticks: { color: "#3B3C3D" } 
       },
       y: { 
         stacked: true, 
-        position: "right",  // Y-axis labels on the right side
+        position: "right",
         title: { display: true, text: "Receiving Country" }, 
         ticks: { color: "#3B3C3D", font: { weight: 600 } } 
       },
@@ -114,9 +151,101 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
           label: (ctx: any) => ` ${ctx.dataset.label} → ${ctx.parsed.x}`,
         },
       },
-      legend: { position: "right", labels: { boxWidth: 14 } },
+      legend: { 
+        position: "right", 
+        labels: { 
+          boxWidth: 14,
+          filter: (legendItem: any) => {
+            // Keep all legend items (origins) visible
+            return true;
+          }
+        } 
+      },
     },
   };
+
+  if (loading) return <div>Loading international patent flow…</div>;
+  if (error) return <div style={{ color: "#EA3C53" }}>{error}</div>;
+  if (!api) return null;
+
+  /* ----- Filter controls ----- */
+  const FilterControls = () => (
+    <div style={{
+      margin: "12px 0",
+      padding: "12px 16px",
+      background: "#f8f9fa",
+      borderRadius: "10px",
+      border: "1px solid #e9ecef"
+    }}>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: "8px"
+      }}>
+        <div style={{ fontWeight: 600, fontSize: "14px", color: "#495057" }}>
+          Filter Receiving Countries ({visibleReceivers.length} of {filteredReceivers.length} shown)
+        </div>
+        <button
+          onClick={resetFilters}
+          style={{
+            padding: "4px 12px",
+            fontSize: "12px",
+            background: "#6c757d",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer"
+          }}
+        >
+          Reset All
+        </button>
+      </div>
+      <div style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "8px"
+      }}>
+        {filteredReceivers.map(receiver => (
+          <label
+            key={receiver}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "4px 8px",
+              background: hiddenReceivers.has(receiver) ? "#e9ecef" : "#e7f4e4",
+              borderRadius: "4px",
+              border: `1px solid ${hiddenReceivers.has(receiver) ? "#dee2e6" : "#c3e6cb"}`,
+              cursor: "pointer",
+              fontSize: "13px",
+              userSelect: "none"
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={!hiddenReceivers.has(receiver)}
+              onChange={() => toggleReceiver(receiver)}
+              style={{
+                marginRight: "6px",
+                cursor: "pointer"
+              }}
+            />
+            {receiver}
+            {hiddenReceivers.has(receiver) && (
+              <span style={{
+                marginLeft: "6px",
+                fontSize: "11px",
+                color: "#6c757d",
+                fontStyle: "italic"
+              }}>
+                (hidden)
+              </span>
+            )}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
 
   /* ----- card wrapper ----- */
   return (
@@ -131,27 +260,29 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
         flexDirection: "column",
       }}
     >
-      {/* <div
-        style={{
-          marginTop: 12,
-          padding: "8px 28px",
-          fontWeight: 700,
-          fontSize: 20,
-          background: "#232526",
-          color: "#fff",
-          borderRadius: 10,
-          alignSelf: "center",
-          boxShadow: "0 1px 8px #bdd24816",
-        }}
-      >
-        International Patent Flow Analysis
-      </div> */}
       <div style={{ textAlign: "center", marginTop: 4, fontSize: 13, color: "#666" }}>
         Where countries receive their patents from
       </div>
 
-      <div style={{ height: 520, marginTop: 10 }}>
+      <div style={{ 
+        height: Math.max(400, visibleReceivers.length * 40 + 100), 
+        marginTop: 10,
+        transition: "height 0.3s ease"
+      }}>
         <Bar data={data} options={options} />
+      </div>
+
+      <FilterControls />
+
+      <div style={{
+        marginTop: "16px",
+        padding: "8px",
+        fontSize: "12px",
+        color: "#6c757d",
+        textAlign: "center",
+        borderTop: "1px solid #e9ecef"
+      }}>
+         
       </div>
     </div>
   );

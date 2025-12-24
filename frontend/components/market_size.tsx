@@ -14,14 +14,13 @@ const arrowBoxHeight = 24;
 const arrowHeight    = 15;
 
 /* ── COMPONENT ────────────────────────────────────── */
-interface Props { size?: Size }
-
-export const MarketSizeCard: React.FC<Props> = ({ size = "medium" }) => {
+export const MarketSizeCard: React.FC = () => {
   const rowRef   = useRef<HTMLDivElement>(null);
   const cellRefs = useRef<HTMLDivElement[]>([]);
   const [arrowLeft, setArrowLeft] = useState(0);
-  const [sizeState, setSizeState] = useState<Size>(size);
+  const [sizeState, setSizeState] = useState<Size | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const hasRunRef = useRef(false);
 
   // Fetch market metrics and classify market size
@@ -33,44 +32,22 @@ export const MarketSizeCard: React.FC<Props> = ({ size = "medium" }) => {
     const run = async () => {
       try {
         setIsLoading(true);
+        setError(null);
         // Resolve backend port from public file (same pattern as IPStat/PublicationsByYear)
         const portRes = await fetch("/backend_port.txt");
         if (!portRes.ok) throw new Error(`Port file HTTP ${portRes.status}`);
-        const trimmedPort = (await portRes.text()).trim();
+        const portStr = (await portRes.text()).trim();
 
-        // First, call family_size/stats to check if family data is populated
-        const familySizeRes = await fetch(`http://localhost:${trimmedPort}/api/family_size/stats`);
-        let familySizeData = await familySizeRes.json();
+        // Call legal_status/ops endpoint to compute market strategy index
+        const opsRes = await fetch(`http://localhost:${portStr}/api/legal_status/ops`, {
+          method: 'POST'
+        });
+        if (!opsRes.ok) throw new Error(`Legal status OPS HTTP ${opsRes.status}`);
+        const opsData = await opsRes.json();
+        console.log("Legal status OPS response:", opsData);
 
-        // If family data is not sufficiently populated, trigger the OPS endpoint
-        if (familySizeRes.status === 202 || (familySizeData.success === false && familySizeData.message)) {
-          console.log("Family members data not populated. Calling /api/family_members/ops...");
-          
-          // Call family_members/ops to populate the data
-          const opsRes = await fetch(`http://localhost:${trimmedPort}/api/family_members/ops`, {
-            method: 'POST'
-          });
-          
-          if (!opsRes.ok) {
-            console.warn("Failed to populate family members:", opsRes.status);
-          } else {
-            console.log("Family members population initiated successfully");
-            
-            // After OPS call completes, fetch family_size/stats again
-            const familySizeRetryRes = await fetch(`http://localhost:${trimmedPort}/api/family_size/stats`);
-            familySizeData = await familySizeRetryRes.json();
-            console.log("Family size stats after population:", familySizeData);
-          }
-        } else {
-          console.log("Family size stats:", familySizeData);
-        }
-
-        // Get mean family size for threshold adjustment (default to 1 if not available)
-        const meanFamilySize = Number(familySizeData?.mean_family_size ?? 1) || 1;
-        console.log("Mean family size:", meanFamilySize);
-
-        // Call market metrics endpoint
-        const metricsRes = await fetch(`http://localhost:${trimmedPort}/api/market_metrics`);
+        // Call market metrics endpoint to get total market value
+        const metricsRes = await fetch(`http://localhost:${portStr}/api/market_metrics`);
         if (!metricsRes.ok) throw new Error(`Market metrics HTTP ${metricsRes.status}`);
         const metrics = await metricsRes.json();
         console.log("Market metrics response:", metrics);
@@ -78,22 +55,22 @@ export const MarketSizeCard: React.FC<Props> = ({ size = "medium" }) => {
         const mv = Number(metrics?.market_value ?? 0);
         console.log("Market value:", mv);
 
-        // Classify by thresholds divided by mean family size: 
-        // <10M/mean_family_size small, 10–100M/mean_family_size medium, >100M/mean_family_size big
-        const smallThreshold = 10_000_000 / meanFamilySize;
-        const mediumThreshold = 100_000_000 / meanFamilySize;
-        console.log("Thresholds - Small:", smallThreshold, "Medium:", mediumThreshold);
+        // Classify by fixed thresholds:
+        // < 10M = small, 10M-100M = medium, > 100M = big
+        const SMALL_THRESHOLD = 10_000_000;
+        const MEDIUM_THRESHOLD = 100_000_000;
+        console.log("Thresholds - Small:", SMALL_THRESHOLD, "Medium:", MEDIUM_THRESHOLD);
         
         let next: Size = "medium";
-        if (mv < smallThreshold) next = "small";
-        else if (mv <= mediumThreshold) next = "medium";
+        if (mv < SMALL_THRESHOLD) next = "small";
+        else if (mv <= MEDIUM_THRESHOLD) next = "medium";
         else next = "big";
 
         setSizeState(next);
         setIsLoading(false);
       } catch (e) {
-        // Fail silently to the initial default size
-        console.warn("MarketSizeCard: failed to load market metrics", e);
+        console.error("MarketSizeCard: failed to load market metrics", e);
+        setError(e instanceof Error ? e.message : "Failed to load market size data");
         setIsLoading(false);
       }
     };
@@ -102,6 +79,7 @@ export const MarketSizeCard: React.FC<Props> = ({ size = "medium" }) => {
 
   /* centre arrow on active stage */
   useEffect(() => {
+    if (!sizeState) return;
     const idx = STAGES.findIndex((s) => s.key === sizeState);
     const el  = cellRefs.current[idx];
     if (el) {
@@ -179,7 +157,26 @@ export const MarketSizeCard: React.FC<Props> = ({ size = "medium" }) => {
             Loading market size data...
           </div>
         </div>
-      ) : (
+      ) : error ? (
+        /* Error State */
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: 120,
+            padding: "20px",
+            color: "#F14A37",
+            fontSize: 14,
+            fontWeight: 500,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ marginBottom: 8, fontSize: 24 }}>⚠️</div>
+          <div>Error: {error}</div>
+        </div>
+      ) : sizeState ? (
         <>
           {/* Arrow */}
           <div 
@@ -260,7 +257,7 @@ export const MarketSizeCard: React.FC<Props> = ({ size = "medium" }) => {
             </span>
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 };

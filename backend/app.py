@@ -20,19 +20,23 @@ from flask import Flask, request, jsonify
 import logging
 from outputs.scaler import GlobalScalers
 from market_strategy import (
-    TOKEN_URL_DEFAULT, LEGAL_URL_DEFAULT,
-    DEAD_PATTERNS, ST3_TO_ISO3,
-    load_api_credentials, build_token_cache, get_access_token,
-    fetch_legal_raw, parse_legal_json_or_xml,
-    classify_member_status, load_gdp_map, compute_msi
-)
-from market_strategy import (
-    load_api_credentials, build_token_cache, get_access_token,
-    fetch_legal_raw, parse_legal_json_or_xml, classify_member_status,
-    load_gdp_map, compute_msi, EP_EXPECTED, WO_EXPECTED
+    load_api_credentials,
+    build_token_cache,
+    get_access_token,
+    fetch_legal_xml,
+    parse_legal_json_or_xml,
+    classify_member_status,
+    compute_msi,
+    to_docdb,
+    infer_status_offline,
+    load_gdp_map,
+    ST3_TO_ISO3,
+    EP_EXPECTED,
+    WO_EXPECTED,
+    build_event_code_lookups
 )
 
-from db import db, Cost, PatentCost
+from db import db, Cost, PatentCost ,LegalXML,MarketStrategy
 import concurrent.futures
 from urllib.parse import quote
 from dotenv import load_dotenv
@@ -2245,8 +2249,9 @@ def create_app():
     @app.route('/api/market_cost', methods=['POST'])
     def update_costs():
         """
-        Updates patent costs based on country and age information.
-        Returns statistics about the cost updates.
+        Ensures Cost table is populated from CSV.
+        This is a prerequisite for market metrics calculation.
+        Returns status and cost table info.
         """
         try:
             # Step 1: Ensure Cost table is populated
@@ -2259,94 +2264,55 @@ def create_app():
                 try:
                     cost = pd.read_csv(csv_path)
                     cost.columns = [
-                    'Country',   
-                    'Years 0.0-1.5',
-                    'Years 2.0-4.5',
-                    'Years 5.0-9.5',
-                    'Years 10.0-14.5',
-                    'Years 15.0-20.0',
-                    'Total Cost (US$)'
-                ]
+                        'Country',   
+                        'Years 0.0-1.5',
+                        'Years 2.0-4.5',
+                        'Years 5.0-9.5',
+                        'Years 10.0-14.5',
+                        'Years 15.0-20.0',
+                        'Total Cost (US$)'
+                    ]
                     updated_cost = update_cost_df(cost)
                     rename_dict = {
-                    'Years 0.0-1.5': 'Years_0_1_5',
-                    'Years 2.0-4.5': 'Years_2_4_5',
-                    'Years 5.0-9.5': 'Years_5_9_5',
-                    'Years 10.0-14.5': 'Years_10_14_5',
-                    'Years 15.0-20.0': 'Years_15_20',
-                    'Total Cost (US$)': 'Total_cost'
-                }
+                        'Years 0.0-1.5': 'Years_0_1_5',
+                        'Years 2.0-4.5': 'Years_2_4_5',
+                        'Years 5.0-9.5': 'Years_5_9_5',
+                        'Years 10.0-14.5': 'Years_10_14_5',
+                        'Years 15.0-20.0': 'Years_15_20',
+                        'Total Cost (US$)': 'Total_cost'
+                    }
                     updated_cost.rename(columns=rename_dict, inplace=True)
                 
-                # Delete existing records before inserting new ones
+                    # Delete existing records before inserting new ones
                     Cost.query.delete()
                 
                     for _, row in updated_cost.iterrows():
                         new_cost = Cost(
                             Country=row['Country'],
-                        Years_0_1_5=row['Years_0_1_5'],
-                        Years_2_4_5=row['Years_2_4_5'],
-                        Years_5_9_5=row['Years_5_9_5'],
-                        Years_10_14_5=row['Years_10_14_5'],
-                        Years_15_20=row['Years_15_20'],
-                        Total_cost=row['Total_cost']
-                    )
+                            Years_0_1_5=row['Years_0_1_5'],
+                            Years_2_4_5=row['Years_2_4_5'],
+                            Years_5_9_5=row['Years_5_9_5'],
+                            Years_10_14_5=row['Years_10_14_5'],
+                            Years_15_20=row['Years_15_20'],
+                            Total_cost=row['Total_cost']
+                        )
                         db.session.add(new_cost)
                     db.session.commit()
+                    app.logger.info(f"Loaded {len(updated_cost)} cost records from CSV")
                 except Exception as e:
                     app.logger.error(f"Error loading cost data: {str(e)}")
                     return jsonify({"error": f"Failed to load cost data: {str(e)}"}), 500
 
-        # Step 2: Load cost data
-            try:
-                cost_df = pd.read_sql('SELECT * FROM costs', db.engine)
-            except Exception as e:
-                app.logger.error(f"Error reading costs table: {str(e)}")
-                return jsonify({"error": "Failed to read cost data"}), 500
+            # Step 2: Verify cost data is available
+            cost_count = Cost.query.count()
+            if cost_count == 0:
+                return jsonify({"error": "Cost table is empty"}), 500
 
-        # Step 3: Fetch patent data
-            try:
-                query = 'SELECT "earliest_priority_year", "first_publication_country" FROM raw_patents'
-                patent_df = pd.read_sql(query, db.engine)
-            except Exception as e:
-                app.logger.error(f"Error reading patent data: {str(e)}")
-                return jsonify({"error": "Failed to read patent data"}), 500
-
-            # Step 4: Calculate patent age
-            patent_df = calculate_age(patent_df)
-
-        # Step 5: Assign cost to each patent
-            patent_df['cost'] = patent_df.apply(lambda row: assign_cost(row, cost_df), axis=1)
-
-        # Step 6: Clear existing patent_costs and save new data
-            try:
-                PatentCost.query.delete()
-            
-                for _, row in patent_df.iterrows():
-                    if pd.notnull(row['Patent Age']) and pd.notnull(row['cost']):
-                        patent_cost = PatentCost(
-                            patent_age=str(row['Patent Age']),
-                        country=row['first_publication_country'],
-                        cost=row['cost']
-                    )
-                        db.session.add(patent_cost)
-                db.session.commit()
-
-                stats = {
-                    "total_patents": len(patent_df),
-                    "costs_assigned": len(patent_df[pd.notnull(patent_df['cost'])]),
-                "total_cost": float(patent_df['cost'].sum())
-            }
-            
-                return jsonify({
-                    "message": "Patent costs updated successfully",
-                    "statistics": stats
+            return jsonify({
+                "message": "Cost table is ready",
+                "cost_records": cost_count,
+                "note": "Market metrics are calculated on-demand in /api/market_metrics"
             }), 200
-
-            except Exception as e:
-                db.session.rollback()
-                app.logger.error(f"Error saving patent costs: {str(e)}")
-                return jsonify({"error": f"Failed to save patent costs: {str(e)}"}), 500
 
         except Exception as e:
             db.session.rollback()
@@ -2354,8 +2320,7 @@ def create_app():
             return jsonify({"error": str(e)}), 500
         
         
-
-
+        
 
 
 
@@ -2402,8 +2367,8 @@ def create_app():
             app.logger.error(f"Error in originality_rate: {str(e)}")
             return jsonify({"error": str(e)}), 500
         
-        
-        
+    
+    
         
     @app.route('/api/market_metrics', methods=['GET'])
     def market_metrics():
@@ -2445,8 +2410,18 @@ def create_app():
             
             # Compute metrics
             market_value, market_rate, mean_value = get_market_metrics(patents_df, cost_df)
-            
+            patents_num = RawPatent.query.count()
+            max_id = db.session.query(db.func.max(SearchKeyword.id)).scalar()
+            total_results = db.session.query(SearchKeyword.total_results).filter_by(id=max_id).scalar()
+            if patents_num >= 500:
+                 market_value = (market_value * total_results) / patents_num
             print(f"[market_metrics] Results - MV: {market_value}, MR: {market_rate}, Mean: {mean_value}")
+            
+
+
+
+
+
             
             return jsonify({
                 'market_value': float(market_value),
@@ -3185,7 +3160,25 @@ def create_app():
             app.logger.error(f"Error in /api/family_member_counts: {e}")
             return jsonify({"error": str(e)}), 500
         
-        
+    @app.route('/api/first_filings/count', methods=['GET'])
+    def get_first_filings_count():
+        """
+        Returns the total number of first filings
+        (rows in raw_patents where first_filing_year IS NOT NULL).
+        """
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text("""
+                SELECT COUNT(*) AS count
+                FROM raw_patents
+                WHERE first_filing_year IS NOT NULL
+                """))
+                total = result.scalar() or 0
+
+            return jsonify({"count": int(total)}), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500    
         
         
     @app.route('/api/family_size_distribution', methods=['GET'])
@@ -5131,9 +5124,60 @@ def create_app():
             return jsonify({"error": str(e)}), 500
         
         
-        
-        
+
     
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
     
     
@@ -5142,11 +5186,11 @@ def create_app():
     # Uses the reusable utilities in market_strategy.py:
     #  - load_api_credentials(), build_token_cache(), fetch_legal_raw(), parse_legal_json_or_xml()
     #  - classify_member_status(), load_gdp_map(), compute_msi()
-    #
+    
     # It updates 3 columns on 'raw_patents':
     #   legal_statuses (JSONB), alive_any (BOOLEAN), market_strategy_index (FLOAT)
     # and exposes a summary endpoint for dashboard cards.
-        # === [Logging for Market Strategy job] ======================================
+    #     === [Logging for Market Strategy job] ======================================
     # Console-only logging (no files). Safe on hot-reload: we guard against duplicates.
     
     MARKET_LOGGER_NAME = "market_strategy"
@@ -5293,8 +5337,17 @@ def create_app():
         _ensure_market_columns(engine)
 
         # Build query (process the entire DB; no request body needed)
+        # Build query with only_missing support
         q = db.session.query(RawPatent).order_by(RawPatent.id.asc())
+
+        if only_missing:
+            q = q.filter(
+                (RawPatent.legal_statuses == None) |     # noqa: E711
+                (RawPatent.market_strategy_index == None)
+            )
+
         patents = q.all()
+
 
         # Detect mode: OPS online vs offline fallback, allowing dynamic .env reload
         local_creds = list(LEGAL_API_CREDS) if LEGAL_API_CREDS else []
@@ -5383,38 +5436,62 @@ def create_app():
             total = len(patents)
 
             denom = float(us_gdp or 1.0)
+                
+            def _infer_status_offline(kind_code: str, family_jurs: List[str]) -> str:
+                """Infer status from kind code for offline mode."""
+                if kind_code:
+                    clean = re.sub(r"[^A-Za-z0-9]", "", str(kind_code).upper())
+                    m = re.search(r"([A-Z]\d{0,2})$", clean)
+                    if m:
+                        k0 = m.group(1)[0]
+                        if k0 in ("B", "C"):
+                            return "GRANTED"
+                        elif k0 == "A":
+                            return "PENDING"
+                return "PENDING"  # Default    
 
             for idx, pat in enumerate(patents):
-                cc2 = (pat.first_publication_country or pat.applicant_country or "").strip().upper()
-                if not cc2 or len(cc2) != 2:
-                    cc2 = (pat.applicant_country or "").strip().upper()
+                # Use family_jurisdictions if available, otherwise fallback to publication/applicant country
+                family_jurs = pat.family_jurisdictions or []
+                if not family_jurs:
+                    # Fallback: infer from publication/applicant country
+                    cc2 = (pat.first_publication_country or pat.applicant_country or "").strip().upper()
+                    if not cc2 or len(cc2) != 2:
+                        cc2 = (pat.applicant_country or "").strip().upper()
+                    family_jurs = [cc2] if cc2 else []
 
-                # Determine base expected GDP share
-                if cc2 in ("EP", "WO"):
-                    dist = EP_EXPECTED_OFFLINE if cc2 == "EP" else WO_EXPECTED_OFFLINE
-                    exp_gdp = 0.0
-                    for iso3_key, w in dist.items():
-                        g = iso3_map.get(iso3_key)
-                        if g is not None:
-                            exp_gdp += float(g) * float(w)
-                    base = exp_gdp / denom if denom else 0.0
-                else:
-                    iso3 = ST3_TO_ISO3.get(cc2) if cc2 else None
-                    if not iso3:
-                        failed.append({"id": pat.id, "reason": f"unsupported or missing country: '{cc2}'"})
-                        continue
-                    gdp = iso3_map.get(iso3)
-                    if gdp is None:
-                        failed.append({"id": pat.id, "reason": f"no GDP for ISO3 {iso3}"})
-                        continue
-                    base = float(gdp) / denom if denom else 0.0
+                if not family_jurs:
+                    failed.append({"id": pat.id, "reason": "no family jurisdictions or publication country"})
+                    continue
 
-                factor = _kind_factor(pat.first_publication_number or pat.publication_number)
-                msi = base * factor
+                # Infer legal status from kind code (same for all family members)
+                kind_code = pat.first_publication_number or pat.publication_number
+                inferred_status = _infer_status_offline(kind_code, family_jurs)
+    
+                # Apply same status to all jurisdictions
+                status_by_country = {jur.upper(): inferred_status for jur in family_jurs if jur}
+                alive_any = inferred_status in ("GRANTED", "ALIVE", "PENDING")
+    
+                # Compute MSI with updated weights
+                msi = compute_msi(
+                    status_by_country,
+                    iso3_map,
+                    us_gdp,
+                    st3_to_iso3_map=ST3_TO_ISO3,
+                    ep_expected=EP_EXPECTED_OFFLINE,
+                    wo_expected=WO_EXPECTED_OFFLINE,
+                    apply_ep_for_granted=True,
+                    weights={
+                        "GRANTED": 1.0,
+                        "ALIVE": 1.0,
+                        "PENDING": 0.6,
+                        "DEAD": 0.0
+                    }
+                )
+    
+                pat.legal_statuses = status_by_country
+                pat.alive_any = bool(alive_any)
                 pat.market_strategy_index = float(msi)
-                # We cannot infer per-country legal status offline
-                pat.legal_statuses = None
-                # alive_any left unchanged (could be None)
                 updated_ids.append(pat.id)
 
                 lbl = _label(msi)
@@ -5515,26 +5592,80 @@ def create_app():
             cred_idx = idx % len(local_creds)
 
             def _attempt_with(ci: int):
-                """One attempt to fetch + compute using credential index ci."""
+                """
+                Enhanced attempt using improved classification from notebook.
+    
+                Strategy:
+                1. Fetch legal status from OPS
+                2. Parse all family members and their legal events
+                3. Classify each member's status using enhanced keyword matching
+                4. Determine primary status (most recent events, grant detection)
+                5. Apply to all family jurisdictions
+                6. Compute MSI
+                """
                 payload_obj, err = fetch_legal_raw(pub_docdb, ci, local_creds, local_token_cache)
                 if payload_obj is None:
-                    # fetch_legal_raw returns (None, "...") on non-HTTP exceptions it catches;
-                    # but if token fetch raised HTTPError, we won't get here (caught outside).
                     raise RuntimeError(err or "fetch failed")
+    
                 members = parse_legal_json_or_xml(payload_obj)
-                status_by_country = {}
+                if not members:
+                    raise RuntimeError("No family members found in OPS response")
+    
+                # Build status map across all members
+                member_statuses = {}
                 for m in members:
                     cc = (m.get("country") or "").upper().strip()
                     if cc:
-                        status_by_country[cc] = classify_member_status(m)
-                alive_any = any(st in ("GRANTED", "PENDING") for st in status_by_country.values())
+                        # Use enhanced classification
+                        status = classify_member_status(m)
+                        member_statuses[cc] = status
+    
+                if not member_statuses:
+                    raise RuntimeError("No valid member statuses extracted")
+    
+                # Determine the "primary" status for this patent family
+                # Priority: GRANTED > ALIVE > PENDING > DEAD
+                status_priority = {"GRANTED": 4, "ALIVE": 3, "PENDING": 2, "DEAD": 1}
+                primary_status = max(
+                    member_statuses.values(),
+                    key=lambda s: status_priority.get(s, 0)
+                )
+    
+                # Get family jurisdictions from patent record
+                family_jurs = pat.family_jurisdictions or []
+                if not family_jurs:
+                    # Fallback: use countries from OPS response
+                    family_jurs = list(member_statuses.keys())
+    
+                # Build status_by_country
+                # Option 1: Use member-specific statuses if available
+                status_by_country = {}
+                for jur in family_jurs:
+                    jur_upper = jur.upper()
+                    # Use specific member status if available, otherwise use primary
+                    status_by_country[jur_upper] = member_statuses.get(jur_upper, primary_status)
+    
+                if not status_by_country:
+                    raise RuntimeError("No jurisdictions to compute MSI")
+    
+                # Determine if any jurisdiction is alive/granted
+                alive_any = any(st in ("GRANTED", "ALIVE", "PENDING") for st in status_by_country.values())
+    
+                # Compute MSI with updated weights
                 msi = compute_msi(
                     status_by_country,
                     ISO3_GDP_MAP,
                     US_GDP_VAL,
+                    st3_to_iso3_map=ST3_TO_ISO3,
                     ep_expected=EP_EXPECTED,
                     wo_expected=WO_EXPECTED,
-                    apply_ep_for_granted=True  # set to False if you want EP distributed only when pending
+                    apply_ep_for_granted=True,
+                    weights={
+                        "GRANTED": 1.0,
+                        "ALIVE": 1.0,    # Full weight for validated/maintained patents
+                        "PENDING": 0.6,  # 40% reduction as per spec
+                        "DEAD": 0.0
+                    }
                 )
 
                 return status_by_country, alive_any, msi
@@ -5598,13 +5729,13 @@ def create_app():
 
             time.sleep(sleep_s)
 
-        # Final commit
-        try:
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            ms_logger.error(f"Final commit failed: {e}")
-            return jsonify({"success": False, "error": f"Database commit failed: {str(e)}"}), 500
+            # Final commit
+            try:
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                ms_logger.error(f"Final commit failed: {e}")
+                return jsonify({"success": False, "error": f"Database commit failed: {str(e)}"}), 500
 
         total_elapsed = time.time() - t0
         ms_logger.info(f"Job done. processed={total} updated={len(updated_ids)} failed={len(failed)} total_time={_fmt_secs(total_elapsed)} avg={total_elapsed/max(total,1):.2f}s/it")
@@ -5653,11 +5784,9 @@ def create_app():
             - alive_share_% is the share of families with at least one GRANTED or PENDING member.
         """
         try:
-            # Compute total families count
             with engine.connect() as conn:
                 total_families = conn.execute(text("SELECT COUNT(*) FROM raw_patents")).scalar() or 0
 
-            # Fetch only rows with computed MSI for aggregates
             df = pd.read_sql(
                 text("SELECT market_strategy_index, alive_any FROM raw_patents WHERE market_strategy_index IS NOT NULL"),
                 con=engine
@@ -5688,8 +5817,8 @@ def create_app():
                 if msi < 0.6:
                     return "Local"
                 if msi < 0.9:
-                    return "Main Markets"  # 0.6 ≤ msi < 0.9
-                return "Global"            # msi ≥ 0.9
+                    return "Main Markets"
+                return "Global"
 
             return jsonify({
                 "count": msi_count,
@@ -5699,24 +5828,443 @@ def create_app():
                 "is_full": is_full,
                 "total_families": int(total_families),
                 "msi_missing": msi_missing,
-                # Technology-level values for frontend component
                 "market_strategy_index": round(avg_msi, 4),
                 "market_strategy_qualification": _qualify(avg_msi)
             })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-   
+
+    @app.route('/api/legal_status/fetch_xml', methods=['GET', 'POST'])
+    def api_fetch_legal_xml():
+        payload = request.get_json(silent=True) or {}
+        limit = int(payload.get("limit", 0))
+        sleep_s = float(payload.get("sleep", 1.2))
+        log_every = max(1, int(payload.get("log_every", 50)))
+        only_missing = bool(payload.get("only_missing", False))
+
+        q = db.session.query(RawPatent).order_by(RawPatent.id.asc())
+        if only_missing:
+            q = q.filter(RawPatent.legal_statuses == None)  # noqa: E711
+        if limit > 0:
+            q = q.limit(limit)
+
+        patents = q.all()
+        total = len(patents)
+        if total == 0:
+            return jsonify({"success": True, "total": 0, "results": []})
+
+        local_creds = list(LEGAL_API_CREDS) if LEGAL_API_CREDS else []
+        local_token_cache = list(LEGAL_TOKEN_CACHE) if LEGAL_TOKEN_CACHE else []
+
+        if not local_creds:
+            try:
+                local_creds = load_api_credentials()
+                local_token_cache = build_token_cache(local_creds)
+                ms_logger.info(f"Reloaded {len(local_creds)} credentials")
+            except Exception as e:
+                return jsonify({"success": False, "error": f"No OPS credentials: {e}"}), 500
+
+        ms_logger.info(f"Starting XML fetch: total={total}, sleep={sleep_s}s")
+        # --------------------------------------------------
+        # Truncate legal_xml table before fetching
+        # --------------------------------------------------
+        try:
+            db.session.execute(text("TRUNCATE TABLE legal_xml RESTART IDENTITY"))
+            db.session.commit()
+            ms_logger.info("legal_xml table truncated successfully")
+        except Exception as e:
+            db.session.rollback()
+            ms_logger.error(f"Failed to truncate legal_xml table: {e}")
+            return jsonify({
+                "success": False,
+                "error": f"Could not truncate legal_xml table: {e}"
+            }), 500
+
+        results = []
+        legal_rows = []
+        t0 = time.time()
+
+        def _safe_legal_error(value, cred_idx=None):
+            if value is None:
+                return None
+            prefix = f"cred_idx={cred_idx} | " if cred_idx is not None else "cred_idx=N/A | "
+            s = prefix + str(value)
+            if len(s) > 250:
+                return s[:250]
+            return s
+
+        def _flush_legal_rows():
+            nonlocal legal_rows
+            if not legal_rows:
+                return
+            try:
+                db.session.bulk_insert_mappings(LegalXML, legal_rows)
+                db.session.commit()
+                legal_rows = []
+            except Exception as e:
+                db.session.rollback()
+                ms_logger.warning(f"Failed to persist LegalXML batch: {e}")
+
+        def disable_cred(ci: int, reason: str):
+            if ci < len(local_creds):
+                ms_logger.warning(f"Disabling cred {ci}: {reason}")
+                del local_creds[ci]
+                del local_token_cache[ci]
+
+        for idx, pat in enumerate(patents):
+            pub_raw = pat.first_publication_number or pat.publication_number
+
+            if not pub_raw or len(str(pub_raw).strip()) < 4:
+                result_obj = {
+                    "publication_number": str(pub_raw) if pub_raw else "N/A",
+                    "xml": None,
+                    "error": "Invalid publication number",
+                }
+                results.append(result_obj)
+                legal_rows.append({
+                    "publication_number": str(pub_raw) if pub_raw else "N/A",
+                    "xml": None,
+                    "error": _safe_legal_error("Invalid publication number", cred_idx=None),
+                })
+                continue
+
+            pub_docdb = _to_docdb(pub_raw)
+
+            if not local_creds:
+                results.append({
+                    "publication_number": pub_docdb,
+                    "xml": None,
+                    "error": "No active credentials",
+                })
+                break
+
+            cred_idx = idx % len(local_creds)
+
+            try:
+                result = fetch_legal_xml(pub_docdb, cred_idx, local_creds, local_token_cache)
+                results.append(result)
+                legal_rows.append({
+                    "publication_number": pub_docdb,
+                    "xml": result.get("xml"),
+                    "error": _safe_legal_error(result.get("error"), cred_idx=cred_idx),
+                })
+
+            except HTTPError as he:
+                code = getattr(he.response, "status_code", None)
+                if code == 401:
+                    disable_cred(cred_idx, "401 Unauthorized")
+                    if local_creds:
+                        new_idx = idx % len(local_creds)
+                        try:
+                            result = fetch_legal_xml(pub_docdb, new_idx, local_creds, local_token_cache)
+                            if not result.get("xml"):
+                                raise HTTPError(response=type(
+                                    "Resp", (), {"status_code": 401}
+                                ))
+
+                            results.append(result)
+                            legal_rows.append({
+                                "publication_number": pub_docdb,
+                                "xml": result.get("xml"),
+                                "error": _safe_legal_error(result.get("error"), cred_idx=new_idx),
+                            })
+                        except Exception as e2:
+                            result_obj = {
+                                "publication_number": pub_docdb,
+                                "xml": None,
+                                "error": f"Retry failed: {e2}",
+                            }
+                            results.append(result_obj)
+                            legal_rows.append({
+                                "publication_number": pub_docdb,
+                                "xml": None,
+                                "error": _safe_legal_error(f"Retry failed: {e2}", cred_idx=new_idx),
+                            })
+                    else:
+                        result_obj = {
+                            "publication_number": pub_docdb,
+                            "xml": None,
+                            "error": "All credentials disabled",
+                        }
+                        results.append(result_obj)
+                        legal_rows.append({
+                            "publication_number": pub_docdb,
+                            "xml": None,
+                            "error": _safe_legal_error("All credentials disabled", cred_idx=cred_idx),
+                        })
+                        break
+                else:
+                    result_obj = {
+                        "publication_number": pub_docdb,
+                        "xml": None,
+                        "error": f"HTTPError: {code}",
+                    }
+                    results.append(result_obj)
+                    legal_rows.append({
+                        "publication_number": pub_docdb,
+                        "xml": None,
+                        "error": _safe_legal_error(f"HTTPError: {code}", cred_idx=cred_idx),
+                    })
+
+            except Exception as e:
+                result_obj = {
+                    "publication_number": pub_docdb,
+                    "xml": None,
+                    "error": str(e),
+                }
+                results.append(result_obj)
+                legal_rows.append({
+                    "publication_number": pub_docdb,
+                    "xml": None,
+                    "error": _safe_legal_error(e, cred_idx=cred_idx),
+                })
+
+            time.sleep(sleep_s)
+
+            if (idx + 1) % 50 == 0:
+                _flush_legal_rows()
+
+            if (idx + 1) % log_every == 0 or (idx + 1) == total:
+                elapsed = time.time() - t0
+                rate = (idx + 1) / max(elapsed, 1e-6)
+                eta_s = (total - (idx + 1)) / max(rate, 1e-6)
+                ok = sum(1 for r in results if r.get("xml"))
+                err = len(results) - ok
+                ms_logger.info(
+                    f"Progress {idx+1}/{total} ({(idx+1)*100/total:.1f}%) "
+                    f"success={ok} errors={err} ETA={_fmt_secs(eta_s)}"
+                )
+
+            if (idx + 1) % 50 == 0 and (idx + 1) < total:
+                ms_logger.info("Cooldown 10s...")
+                time.sleep(10)
+
+        total_elapsed = time.time() - t0
+        ok = sum(1 for r in results if r.get("xml"))
+        ms_logger.info(f"Complete: {ok}/{len(results)} success in {_fmt_secs(total_elapsed)}")
+
+        _flush_legal_rows()
+
+        return jsonify({
+            "success": True,
+            "total": len(results),
+            "success_count": ok,
+            "error_count": len(results) - ok,
+            "elapsed_s": round(total_elapsed, 2),
+            "results": results,
+        })
 
 
-        
 
+    @app.route('/api/market_strategy/load_from_legal_xml',methods=['POST'])
+    def api_market_strategy_load_from_legal_xml():
+        payload = request.get_json(silent=True) or {}
+        limit = int(payload.get("limit", 0))
+
+        from market_strategy import PatentStatusExtractor
+        from db import MarketStrategy
+
+        code_lookup, is_granted_lookup = build_event_code_lookups()
+
+        q = db.session.query(LegalXML.publication_number, LegalXML.xml)
+        q = q.filter(LegalXML.xml.isnot(None))
+        if limit > 0:
+            q = q.limit(limit)
+
+        legal_rows = q.all()
+        if not legal_rows:
+            return jsonify({"success": True, "total": 0, "inserted": 0, "updated": 0}), 200
+
+        legal_xml_df = pd.DataFrame([
+            {"publication_number": r[0], "xml": r[1]} for r in legal_rows
+        ])
+
+        patent_status_df = PatentStatusExtractor.build_patent_status_df(
+            legal_xml_df,
+            code_lookup=code_lookup,
+            is_granted_lookup=is_granted_lookup,
+        )
+
+        # Normalize columns from PatentStatusExtractor (it returns title-cased columns)
+        if isinstance(patent_status_df, pd.DataFrame) and len(patent_status_df.columns) > 0:
+            patent_status_df = patent_status_df.rename(columns={
+                "Publication number": "publication_number",
+                "Status": "status",
+                "Is granted": "is_granted",
+                "XML": "xml",
+                "Error": "error",
+            })
+
+        if "publication_number" not in patent_status_df.columns:
+            return jsonify({
+                "success": False,
+                "error": "Patent status table missing 'publication_number' column after normalization",
+                "columns": list(patent_status_df.columns),
+            }), 500
+
+        # Build family lookup keyed by DOCDB-normalized publication numbers
+        fam_rows = db.session.query(
+            RawPatent.publication_number,
+            RawPatent.first_publication_number,
+            RawPatent.family_members,
+            RawPatent.family_jurisdictions,
+        ).all()
+        fam_lookup = {}
+        for pub, pub2, fam_members, fam_jur in fam_rows:
+            for k in (pub2, pub):
+                kk = str(k or "").strip()
+                if not kk:
+                    continue
+                fam_lookup[_to_docdb(kk)] = {
+                    "family_members": fam_members,
+                    "family_jurisdictions": fam_jur,
+                }
+
+        pubs = patent_status_df["publication_number"].fillna("").astype(str).tolist()
+        pubs = [p.strip() for p in pubs if str(p).strip()]
+
+        existing_rows = db.session.query(MarketStrategy.id, MarketStrategy.publication_number)
+        if pubs:
+            existing_rows = existing_rows.filter(MarketStrategy.publication_number.in_(pubs))
+        existing_rows = existing_rows.all()
+        existing_by_pub = {str(pub): int(mid) for mid, pub in existing_rows}
+
+        to_insert = []
+        to_update = []
+
+        for r in patent_status_df.itertuples(index=False):
+            pub = str(getattr(r, "publication_number", "") or "").strip()
+            if not pub:
+                continue
+
+            fam = fam_lookup.get(_to_docdb(pub), {})
+            legal_status = getattr(r, "status", None)
+            is_granted = bool(getattr(r, "is_granted", False))
+
+            if pub in existing_by_pub:
+                to_update.append({
+                    "id": existing_by_pub[pub],
+                    "publication_number": pub,
+                    "family_members": fam.get("family_members"),
+                    "family_jurisdictions": fam.get("family_jurisdictions"),
+                    "legal_status": legal_status,
+                    "is_granted": is_granted,
+                })
+            else:
+                to_insert.append({
+                    "publication_number": pub,
+                    "family_members": fam.get("family_members"),
+                    "family_jurisdictions": fam.get("family_jurisdictions"),
+                    "legal_status": legal_status,
+                    "is_granted": is_granted,
+                })
+
+        try:
+            if to_update:
+                db.session.bulk_update_mappings(MarketStrategy, to_update)
+            if to_insert:
+                db.session.bulk_insert_mappings(MarketStrategy, to_insert)
+            if to_update or to_insert:
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"success": False, "error": str(e)}), 500
+
+        return jsonify({
+            "success": True,
+            "total": int(len(patent_status_df)),
+            "inserted": int(len(to_insert)),
+            "updated": int(len(to_update)),
+        }), 200
+
+    @app.route('/api/market_strategy/compute_market_strategy', methods=['GET', 'POST'])
+    def compute_market_strategy():
+        payload = request.get_json(silent=True) or {}
+        limit = int(payload.get("limit", 0))
+        only_missing = bool(payload.get("only_missing", True))
+
+        q = db.session.query(
+            MarketStrategy.id,
+            MarketStrategy.family_jurisdictions,
+            MarketStrategy.legal_status,
+            MarketStrategy.is_granted,
+        )
+        if only_missing:
+            q = q.filter(MarketStrategy.market_strategy_index == None)  # noqa: E711
+        if limit > 0:
+            q = q.limit(limit)
+
+        rows = q.all()
+        if not rows:
+            return jsonify({
+                "success": True,
+                "updated": 0,
+                "total": 0,
+            }), 200
+
+        updates = []
+
+        for mid, fam_jur, legal_status, is_granted in rows:
+            # Determine a single status to apply to all family jurisdictions.
+            status_single = (legal_status or "").upper().strip()
+            status_by_country = {}
+            jurisdictions = fam_jur or []
+            if isinstance(jurisdictions, str):
+                jurisdictions = [
+                    j.strip() for j in jurisdictions.split(",") if j.strip() 
+                ]
+
+            for st3 in jurisdictions:
+                st3u = (st3 or "").upper().strip()
+                if not st3u:
+                    continue
+                status_by_country[st3u] = status_single
+            msi_val = compute_msi(
+                status_by_country=status_by_country,
+                iso3_gdp_map=ISO3_GDP_MAP,
+                us_gdp=US_GDP_VAL,
+                st3_to_iso3_map=ST3_TO_ISO3,
+                ep_expected=EP_EXPECTED,
+                wo_expected=WO_EXPECTED,
+                apply_ep_for_granted=is_granted,
+            )
+            updates.append({
+                "id": mid,
+                "market_strategy_index": float(msi_val),
+            })
+
+        try:
+            db.session.bulk_update_mappings(MarketStrategy, updates)
+            db.session.commit()
+
+            valid_msis = [
+                u["market_strategy_index"]
+                for u in updates
+                if u.get("market_strategy_index") not in (None, 0.0)
+                ]
+
+            technology_msi = (
+                float(sum(valid_msis) / len(valid_msis))
+                if valid_msis else 0.0
+            )
+
+
+            return jsonify({
+                "success": True,
+                "total": len(rows),
+                "updated": len(updates),
+                "technology_msi": round(technology_msi, 4),
+                "non_zero_patents": len(valid_msis),
+            }), 200
+
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({
+                "success": False,
+                "error": str(e),
+            }), 500
            
-        
-        
-        
-        
-        
-        
+
 
     @app.route('/api/report/generate-pptx', methods=['POST'])
     def generate_pptx():
@@ -5853,4 +6401,4 @@ if __name__ == '__main__':
         exit(0)
 
     signal.signal(signal.SIGINT, handle_exit)
-    signal.signal(signal.SIGTERM, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit) 
