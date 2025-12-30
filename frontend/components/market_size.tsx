@@ -1,5 +1,6 @@
 // MarketSizeCard.tsx
 import React, { useEffect, useRef, useState } from "react";
+import LoadingSpinner from "./LoadingSpinner"; // Add this import
 
 /* ── STAGES ───────────────────────────────────────── */
 type Size = "small" | "medium" | "big";
@@ -39,12 +40,28 @@ export const MarketSizeCard: React.FC = () => {
         const portStr = (await portRes.text()).trim();
 
         // Call legal_status/ops endpoint to compute market strategy index
-        const opsRes = await fetch(`http://localhost:${portStr}/api/legal_status/ops`, {
+        const opsRes = await fetch(`http://localhost:${portStr}/api/legal_status/fetch_xml`, {
           method: 'POST'
         });
         if (!opsRes.ok) throw new Error(`Legal status OPS HTTP ${opsRes.status}`);
         const opsData = await opsRes.json();
         console.log("Legal status OPS response:", opsData);
+        
+        // Call family_members/ops endpoint to update DB
+        const familyRes = await fetch(`http://localhost:${portStr}/api/family_members/ops`, {
+          method: 'POST'
+        });
+        if (!familyRes.ok) throw new Error(`Family members OPS HTTP ${familyRes.status}`);
+        const familyData = await familyRes.json();
+        console.log("Family members OPS response:", familyData);
+
+        // Load market strategy from legal XML
+        const loadRes = await fetch(`http://localhost:${portStr}/api/market_strategy/load_from_legal_xml`, {
+          method: 'POST'
+        });
+        if (!loadRes.ok) throw new Error(`Market strategy load HTTP ${loadRes.status}`);
+        const loadData = await loadRes.json();
+        console.log("Market strategy load response:", loadData);
 
         // Call market metrics endpoint to get total market value
         const metricsRes = await fetch(`http://localhost:${portStr}/api/market_metrics`);
@@ -119,43 +136,15 @@ export const MarketSizeCard: React.FC = () => {
       </div>
 
       {isLoading ? (
-        /* Loading State */
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: 120,
-            padding: "20px",
-          }}
-        >
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              border: "4px solid #f3f3f3",
-              borderTop: "4px solid #BDD248",
-              borderRadius: "50%",
-              animation: "spin 1s linear infinite",
-            }}
-          />
-          <style>{`
-            @keyframes spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-          `}</style>
-          <div
-            style={{
-              marginTop: 12,
-              color: "#232526",
-              fontSize: 14,
-              fontWeight: 500,
-            }}
-          >
-            Loading market size data...
-          </div>
+        /* Use LoadingSpinner component */
+        <div style={{ 
+          display: "flex", 
+          justifyContent: "center", 
+          alignItems: "center", 
+          minHeight: 150,
+          width: "100%"
+        }}>
+          <LoadingSpinner text="Loading market size data..." />
         </div>
       ) : error ? (
         /* Error State */

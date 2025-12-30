@@ -2,7 +2,7 @@
 
 
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import LoadingSpinner from "./LoadingSpinner";
 
 // Styles for the value boxes and labels
@@ -44,49 +44,59 @@ type ChartProps = { width?: number; height?: number };
 export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
   const [metrics, setMetrics] = useState<MarketMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    let isMounted = true;
-    // First, fetch the backend port dynamically
-    fetch("/backend_port.txt")
-      .then((res) => {
-        if (!res.ok) throw new Error(`Port file HTTP ${res.status}`);
-        return res.text();
-      })
-      .then((port) => {
-        if (!isMounted) return;
-        const trimmedPort = port.trim();
-        // First, call /api/market_cost to update DB
-        return fetch(`http://localhost:${trimmedPort}/api/market_cost`, { method: 'POST' })
-          .then((costRes) => {
-            if (!costRes.ok) throw new Error(`Market cost HTTP ${costRes.status}`);
-            // Then call /api/family_members/ops to update DB
-            return fetch(`http://localhost:${trimmedPort}/api/family_members/ops`, { method: 'POST' });
-          })
-          .then((familyRes) => {
-            if (!familyRes || !familyRes.ok) throw new Error(`Family members HTTP ${familyRes?.status}`);
-            // Then call /api/legal_status/ops to compute alive_any and market_strategy_index
-            return fetch(`http://localhost:${trimmedPort}/api/legal_status/ops`, { method: 'POST' });
-          })
-          .then((legalRes) => {
-            if (!legalRes || !legalRes.ok) throw new Error(`Legal status HTTP ${legalRes?.status}`);
-            // After all DB updates, fetch metrics
-            return fetch(`http://localhost:${trimmedPort}/api/market_metrics`)
-              .then((metricsRes) => {
-                if (!metricsRes.ok) throw new Error(`Metrics HTTP ${metricsRes.status}`);
-                return metricsRes.json();
-              })
-              .then((data: MarketMetrics) => {
-                if (isMounted) setMetrics(data);
-              });
-          });
-      })
-      .catch((err) => {
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
+
+    const run = async () => {
+      try {
+        const portRes = await fetch("/backend_port.txt", { signal });
+        if (!portRes.ok) throw new Error(`Port file HTTP ${portRes.status}`);
+        const trimmedPort = (await portRes.text()).trim();
+        const baseUrl = `http://localhost:${trimmedPort}`;
+
+        const postOk = async (path: string) => {
+          const res = await fetch(`${baseUrl}${path}`, { method: "POST", signal });
+          if (!res.ok) {
+            const details = await res.text().catch(() => "");
+            throw new Error(`${path} HTTP ${res.status}${details ? `: ${details}` : ""}`);
+          }
+        };
+
+        await postOk("/api/market_cost");
+        await postOk("/api/family_members/ops");
+        await postOk("/api/legal_status/fetch_xml");
+        await postOk("/api/market_strategy/load_from_legal_xml");
+
+        const metricsRes = await fetch(`${baseUrl}/api/market_metrics?t=${Date.now()}`, {
+          cache: "no-store",
+          signal,
+        });
+        if (!metricsRes.ok) throw new Error(`Metrics HTTP ${metricsRes.status}`);
+        const raw: MarketMetrics = await metricsRes.json();
+        const data: MarketMetrics = {
+          market_rate: Number((raw as any)?.market_rate ?? 0),
+          market_value: Number((raw as any)?.market_value ?? 0),
+          mean_value: Number((raw as any)?.mean_value ?? 0),
+        };
+
+        console.log("[IPStat] backend port:", trimmedPort);
+        console.log("[IPStat] /api/market_metrics response:", raw, "normalized:", data);
+
+        setMetrics(data);
+      } catch (err) {
+        if (signal.aborted) return;
         console.error(err);
-        if (isMounted) setError("Failed to load market cost or metrics");
-      });
+        setError("Failed to load market cost or metrics");
+      }
+    };
+
+    run();
     return () => {
-      isMounted = false;
+      if (abortRef.current) abortRef.current.abort();
     };
   }, []);
 

@@ -43,8 +43,11 @@ export const InvestmentDynamic: React.FC = () => {
   const [growthRate, setGrowthRate] = useState<number | null>(null);
   const [years, setYears] = useState<[number, number] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showComment, setShowComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
 
   const rowRef = useRef<HTMLDivElement>(null);
+  const arrowRef = useRef<HTMLDivElement>(null);
   const [arrowLeft, setArrowLeft] = useState<number>(0);
 
   // Fetch logic (unchanged)
@@ -85,6 +88,20 @@ export const InvestmentDynamic: React.FC = () => {
     setArrowLeft(cellWidth * stage.index + cellWidth / 2);
   }, [growthRate]);
 
+  const getInterpretation = (rate: number, stageLabel: string) => {
+    if (rate < 0) {
+      return "This indicates a decrease in investment activity, which may reflect market contraction, reduced investor confidence, or external economic pressures.";
+    } else if (rate >= 0 && rate < 10) {
+      return "This suggests stable but slow growth, typical of mature markets or industries with limited expansion opportunities.";
+    } else if (rate >= 10 && rate < 20) {
+      return "This shows healthy growth, indicating increasing market interest and potential expansion opportunities.";
+    } else if (rate >= 20 && rate < 50) {
+      return "This represents strong growth, signaling high market demand and significant investment opportunities.";
+    } else {
+      return "This indicates explosive growth, often seen in emerging markets, innovative sectors, or during investment booms.";
+    }
+  };
+
   if (error) return <div style={{ color: "#EA3C53" }}>{error}</div>;
   if (growthRate === null)
     return <LoadingSpinner text="Loading investment dynamic..." />;
@@ -102,8 +119,39 @@ export const InvestmentDynamic: React.FC = () => {
       width: "100%",
       display: "flex",
       flexDirection: "column",
-      alignItems: "center"
+      alignItems: "center",
+      position: "relative"
     }}>
+      {/* Info icon at top-right corner of the card */}
+      <div
+        style={{
+          position: "absolute",
+          top: 5,
+          right: 10,
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "12px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.right, y: rect.top });
+          setShowComment(true);
+        }}
+        onMouseLeave={() => setShowComment(false)}
+      >
+        i
+      </div>
+
       {/* Title */}
       <div style={{
         marginTop: 12,
@@ -119,6 +167,7 @@ export const InvestmentDynamic: React.FC = () => {
       }}>
         Investment Dynamic
       </div>
+
       {/* Arrow pointing to active stage */}
       <div style={{
         height: arrowBoxHeight,
@@ -158,6 +207,7 @@ export const InvestmentDynamic: React.FC = () => {
           />
         </svg>
       </div>
+
       {/* Stage boxes */}
       <div
         ref={rowRef}
@@ -197,6 +247,7 @@ export const InvestmentDynamic: React.FC = () => {
           </div>
         ))}
       </div>
+
       {/* Growth Rate and Years */}
       <div style={{
         color: "#232526",
@@ -217,6 +268,49 @@ export const InvestmentDynamic: React.FC = () => {
           </span>
         )}
       </div>
+
+      {/* Comment Block (on hover) */}
+      {showComment && (
+       <div
+  style={{
+    position: "fixed",
+    left: commentPosition.x - 250,
+    top: commentPosition.y,
+    width: 280,
+    background: "#fff",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    padding: "15px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    zIndex: 10000,
+    fontSize: "14px",
+    lineHeight: "1.4"
+  }}
+  onMouseEnter={() => setShowComment(true)}
+  onMouseLeave={() => setShowComment(false)}
+>
+  <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+    📈 Growth Analysis
+  </div>
+  <div style={{ color: "#555" }}>
+    The investment growth rate of <strong>{growthRate?.toFixed(2)}%</strong> 
+    {years && ` from ${years[0]} to ${years[1]}`} places it in the{" "}
+    <strong style={{ color: stage.color }}>{stage.label}</strong> category.
+    <br /><br />
+    {getInterpretation(growthRate, stage.label)}
+  </div>
+  <div style={{ 
+    marginTop: "10px", 
+    fontSize: "12px", 
+    color: "#888",
+    fontStyle: "italic",
+    borderTop: "1px solid #eee",
+    paddingTop: "8px"
+  }}>
+    💡 <strong>Tip:</strong> The arrow indicates the current growth stage
+  </div>
+</div>
+      )}
     </div>
   );
 };

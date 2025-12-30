@@ -1,6 +1,4 @@
-
 import LoadingSpinner from "./LoadingSpinner";
-
 import React, { useEffect, useRef, useState } from "react";
 import { Bar, getElementAtEvent } from "react-chartjs-2";
 import {
@@ -40,6 +38,10 @@ export const TopIPCCodes: React.FC = () => {
 
   /* NEW ➜ store the bar the user clicked to show its details later */
   const [selectedInfo, setSelectedInfo] = useState<any>(null);
+
+  /* NEW ➜ comment section state */
+  const [showGeneralComment, setShowGeneralComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
 
   /* OPTIONAL ➜ keep a ref to the Chart instance in case you want to
      programmatically interact with it in the future (e.g., zoom/resize). */
@@ -134,7 +136,10 @@ export const TopIPCCodes: React.FC = () => {
           /* Custom tooltip shows count + title + explanation + hint */
           label: (ctx: any) => {
             const code = ctx.label;
-            return `${code}: ${ctx.parsed.x} patents\n(click for more details)`;
+            const info = ipcInfoMap[code];
+            const title = info?.title ? `\n${info.title}` : '';
+            const percentage = ((ctx.parsed.x / totalPatents) * 100).toFixed(1);
+            return `${code}: ${ctx.parsed.x} patents (${percentage}%)${title}`;
           }
         }
       }
@@ -167,9 +172,40 @@ export const TopIPCCodes: React.FC = () => {
         flexDirection: "column",
         alignItems: "center",
         minHeight: 420,
-        margin: "0 auto"
+        margin: "0 auto",
+        position: "relative" // Added for positioning the info icon
       }}
     >
+      {/* Info icon for general comment */}
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          width: 24,
+          height: 24,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "14px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.left, y: rect.bottom });
+          setShowGeneralComment(true);
+        }}
+        onMouseLeave={() => setShowGeneralComment(false)}
+      >
+        i
+      </div>
+
       {/* ---------------------- Bar chart ---------------------- */}
       <div style={{ width: 500, height: 420, overflow: "visible" }}>
         <Bar
@@ -245,9 +281,83 @@ export const TopIPCCodes: React.FC = () => {
           </p>
         </div>
       )}
+
+      {/* General Comment Block (on hover) */}
+      {showGeneralComment && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 200,
+            top: commentPosition.y + 5,
+            width: 250,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.4"
+          }}
+          onMouseEnter={() => setShowGeneralComment(true)}
+          onMouseLeave={() => setShowGeneralComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            📊 IPC Codes Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            {(() => {
+              if (sortedEntries.length === 0) {
+                return "No IPC code data available for analysis.";
+              }
+              
+              // Calculate top 3 IPC codes
+              const top3 = sortedEntries.slice(0, 3);
+              const totalTop3 = top3.reduce((sum, [, count]) => sum + count, 0);
+              const top3Percentage = (totalTop3 / totalPatents * 100).toFixed(1);
+              
+              // Calculate dominance of top code
+              const topCodePercentage = (top3[0][1] / totalPatents * 100).toFixed(1);
+              
+              return (
+                <>
+                  The most frequent IPC code is <strong>{top3[0][0]}</strong> with{" "}
+                  <strong>{top3Percentage}%</strong> of all patents.
+                  <br /><br />
+                  The top 3 codes (
+                  {top3.map(([code], idx) => (
+                    <span key={code}>
+                      {idx > 0 && idx === top3.length - 1 ? " and " : idx > 0 ? ", " : ""}
+                      <strong>{code}</strong>
+                    </span>
+                  ))
+                  }) account for <strong>{top3Percentage}%</strong> of total patents.
+                  <br /><br />
+                  {parseFloat(topCodePercentage) > 25 ? (
+                    <>This indicates a strong focus on <strong>{top3[0][0]}</strong> technology.</>
+                  ) : parseFloat(topCodePercentage) > 15 ? (
+                    <>This shows moderate concentration in <strong>{top3[0][0]}</strong>.</>
+                  ) : (
+                    <>Patent distribution is relatively balanced across technology areas.</>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Tip:</strong> Click on bars to see detailed IPC code information
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default TopIPCCodes;
-

@@ -10,6 +10,10 @@ export const Top10Applicants: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  
+  // Comment section state
+  const [showGeneralComment, setShowGeneralComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -53,101 +57,213 @@ export const Top10Applicants: React.FC = () => {
     }))
   };
 
-const options = {
-  indexAxis: 'y' as const,
-  responsive: true,
-  maintainAspectRatio: false,
-  layout: {
-    padding: {
-      left: 20
-    }
-  },
-  plugins: {
-    legend: { display: false },
-    title: { display: false },
-    tooltip: {
-      callbacks: {
-        label: (ctx: any) => `${ctx.parsed.x} patents`
+  const options = {
+    indexAxis: 'y' as const,
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: {
+      padding: {
+        left: 20
       }
-    }
-  },
-  scales: {
-    x: {
-      beginAtZero: true,
-      ticks: { color: "#232526", font: { size: 12, weight: 600 } },
-      grid: { color: "#eee" }
     },
-    y: {
-      ticks: { 
-        color: "#232526", 
-        font: { size: 10, weight: 500 },
-        autoSkip: false,
-        maxRotation: 0,
-        minRotation: 0,
-        callback: function(value: any, index: number) {
-          const label = (this as any).getLabelForValue(value);
-          if (label && label.length > 37) {
-            // Split into multiple lines at ~37 chars
-            const words = label.split(' ');
-            const lines: string[] = [];
-            let currentLine = '';
-            for (const word of words) {
-              if ((currentLine + ' ' + word).trim().length <= 37) {
-                currentLine = (currentLine + ' ' + word).trim();
-              } else {
-                if (currentLine) lines.push(currentLine);
-                currentLine = word;
-              }
-            }
-            if (currentLine) lines.push(currentLine);
-            return lines;
-          }
-          return label;
+    plugins: {
+      legend: { display: false },
+      title: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => `${ctx.parsed.x} patents`
         }
+      }
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+        ticks: { color: "#232526", font: { size: 12, weight: 600 } },
+        grid: { color: "#eee" }
       },
-      grid: { color: "#fff" },
-      afterFit: (scaleInstance: any) => {
-        scaleInstance.width = 320;
+      y: {
+        ticks: { 
+          color: "#232526", 
+          font: { size: 10, weight: 500 },
+          autoSkip: false,
+          maxRotation: 0,
+          minRotation: 0,
+          callback: function(value: any, index: number) {
+            const label = (this as any).getLabelForValue(value);
+            if (label && label.length > 37) {
+              // Split into multiple lines at ~37 chars
+              const words = label.split(' ');
+              const lines: string[] = [];
+              let currentLine = '';
+              for (const word of words) {
+                if ((currentLine + ' ' + word).trim().length <= 37) {
+                  currentLine = (currentLine + ' ' + word).trim();
+                } else {
+                  if (currentLine) lines.push(currentLine);
+                  currentLine = word;
+                }
+              }
+              if (currentLine) lines.push(currentLine);
+              return lines;
+            }
+            return label;
+          }
+        },
+        grid: { color: "#fff" },
+        afterFit: (scaleInstance: any) => {
+          scaleInstance.width = 320;
+        }
       }
     }
-  }
-};
+  };
 
-
-return (
-  <div style={{
-    background: "#fff",
-    borderRadius: 18,
-    boxShadow: "0 2px 18px #B2DBA422",
-    padding: 5,
-    minWidth: 600,
-    width: "fit-content",
-    maxWidth: "100%",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    minHeight: 340,
-    margin: "0 auto"
-  }}>
-    <div style={{ width: 650, height: 420, overflow: "visible" }}>
-      <Bar data={chartData} options={options} />
-    </div>
-    {data.percentage !== undefined && (
-      <div style={{
-        marginTop: 12,
-        padding: "8px 16px",
-        background: "#f5f5f5",
-        borderRadius: 8,
-        fontSize: 13,
-        color: "#555",
-        textAlign: "center"
-      }}>
-        Top 10 applicants represent <strong>{data.percentage}%</strong> of the top 100 applicants 
-        ({data.top10_total} out of {data.top100_total} patents)
+  return (
+    <div style={{
+      background: "#fff",
+      borderRadius: 18,
+      boxShadow: "0 2px 18px #B2DBA422",
+      padding: 5,
+      minWidth: 600,
+      width: "fit-content",
+      maxWidth: "100%",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      minHeight: 340,
+      margin: "0 auto",
+      position: "relative" // Added for positioning the info icon
+    }}>
+      {/* Info icon for general comment */}
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          width: 24,
+          height: 24,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "14px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.left, y: rect.bottom });
+          setShowGeneralComment(true);
+        }}
+        onMouseLeave={() => setShowGeneralComment(false)}
+      >
+        i
       </div>
-    )}
-  </div>
-);
+
+      <div style={{ width: 650, height: 420, overflow: "visible" }}>
+        <Bar data={chartData} options={options} />
+      </div>
+      
+      {data.percentage !== undefined && (
+        <div style={{
+          marginTop: 12,
+          padding: "8px 16px",
+          background: "#f5f5f5",
+          borderRadius: 8,
+          fontSize: 13,
+          color: "#555",
+          textAlign: "center"
+        }}>
+          Top 10 applicants represent <strong>{data.percentage}%</strong> of the top 100 applicants 
+          ({data.top10_total} out of {data.top100_total} patents)
+        </div>
+      )}
+      
+      {/* General Comment Block (on hover) */}
+      {showGeneralComment && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 200,
+            top: commentPosition.y + 5,
+            width: 250,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.4"
+          }}
+          onMouseEnter={() => setShowGeneralComment(true)}
+          onMouseLeave={() => setShowGeneralComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            🏆 Top Applicants Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            {(() => {
+              if (!data || !data.labels || !data.datasets || !data.datasets[0]?.data) {
+                return "No applicant data available for analysis.";
+              }
+              
+              const labels = data.labels;
+              const patentCounts = data.datasets[0].data;
+              const top3Count = Math.min(3, labels.length);
+              
+              // Get top 3 applicants (already sorted by API)
+              const topApplicants = [];
+              for (let i = 0; i < top3Count; i++) {
+                topApplicants.push({
+                  name: labels[i],
+                  count: patentCounts[i],
+                  rank: i + 1
+                });
+              }
+              
+              // Calculate dominance percentage
+              const top1Percentage = data.top10_total > 0 ? 
+                (topApplicants[0].count / data.top10_total * 100).toFixed(1) : "0";
+              
+              return (
+                <>
+                  The top applicants in this technology are:
+                  <br /><br />
+                  {topApplicants.map((applicant, index) => (
+                    <div key={index} style={{ marginBottom: "4px" }}>
+                      <strong>{applicant.rank}. {applicant.name}</strong>: {applicant.count} patents
+                    </div>
+                  ))}
+                  <br />
+                  Together, these top 3 applicants hold{" "}
+                  <strong>{top1Percentage}%</strong> of patents among the top 10.
+                  <br /><br />
+                  The top 10 applicants represent{" "}
+                  <strong>{data.percentage}%</strong> of the top 100 applicants, 
+                  showing {parseFloat(data.percentage) > 50 ? "strong" : parseFloat(data.percentage) > 30 ? "moderate" : "some"} 
+                  concentration of patent ownership.
+                </>
+              );
+            })()}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Tip:</strong> The data is sorted by patent count (highest to lowest)
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default Top10Applicants;

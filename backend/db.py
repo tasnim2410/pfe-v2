@@ -545,6 +545,20 @@ class MarketStrategy(db.Model):
     updated_at = Column(DateTime, onupdate=func.now())
 
 
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'publication_number': self.publication_number,
+            'family_members': self.family_members,
+            'family_jurisdictions': self.family_jurisdictions,
+            'legal_status': self.legal_status,
+            'is_granted': self.is_granted,
+            'market_strategy_index': self.market_strategy_index,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
                
         
 # class PatentOPS(db.Model):

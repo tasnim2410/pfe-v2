@@ -2,11 +2,11 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /* ── STAGES ────────────────────────────────────────────────────────────── */
-type Level = "local" | "regional" | "global";
+type Level = "local" | "main markets" | "global";
 
 const STAGES: { label: string; color: string; key: Level }[] = [
   { key: "local",    label: "Local",    color: "#F14A37" }, // red
-  { key: "regional", label: "Regional", color: "#F2D15F" }, // yellow
+  { key: "main markets", label: "Main Markets", color: "#F2D15F" }, // yellow
   { key: "global",   label: "Global",   color: "#BDD248" }, // green
 ];
 
@@ -19,7 +19,7 @@ interface Props {
 }
 
 export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
-  const [level, setLevel] = useState<Level>("regional");
+  const [level, setLevel] = useState<Level>("main markets");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [msiValue, setMsiValue] = useState<number | null>(null); // Added state for MSI value
@@ -127,7 +127,7 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         } else if (avgMsi >= 0.9) {
           setLevel("global");
         } else {
-          setLevel("regional");
+          setLevel("main markets");
         }
         
       } catch (err) {

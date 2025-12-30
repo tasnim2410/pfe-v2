@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import LoadingSpinner from "./LoadingSpinner";
 
 const PIE_COLORS = [
-  "#E6F4EA", "#B9E6C9", "#70C36A",
+  "#c8d7d1", "#99c8b3", "#679e5f",
   "#FFD166", "#FFE8A3", "#EF476F",
   "#F28D8D", "#A29EB6"
 ];
@@ -201,47 +201,89 @@ export const ApplicantTypePie: React.FC = () => {
 
       {/* General Comment Block (on hover) */}
       {showGeneralComment && (
-        <div
-          style={{
-            position: "fixed",
-            left: commentPosition.x - 200,
-            top: commentPosition.y + 5,
-            width: 250,
-            background: "#fff",
-            border: "1px solid #ddd",
-            borderRadius: "8px",
-            padding: "15px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            zIndex: 10000,
-            fontSize: "14px",
-            lineHeight: "1.4"
-          }}
-          onMouseEnter={() => setShowGeneralComment(true)}
-          onMouseLeave={() => setShowGeneralComment(false)}
-        >
-          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
-            📊 Analysis Comment
-          </div>
-          <div style={{ color: "#555" }}>
-            {/* REPLACE THIS COMMENT WITH YOUR CONTENT */}
-            This chart shows the distribution of applicant types in our system. 
-            The largest segment represents individual applicants, followed by 
-            corporate entities. The co-applicant rate indicates how frequently 
-            applications include multiple parties.
-            {/* END OF REPLACEABLE CONTENT */}
-          </div>
-          <div style={{ 
-            marginTop: "10px", 
-            fontSize: "12px", 
-            color: "#888",
-            fontStyle: "italic",
-            borderTop: "1px solid #eee",
-            paddingTop: "8px"
-          }}>
-            💡 <strong>Tip:</strong> Hover over pie segments for detailed percentages
-          </div>
-        </div>
-      )}
+  <div
+    style={{
+      position: "fixed",
+      left: commentPosition.x - 200,
+      top: commentPosition.y + 5,
+      width: 250,
+      background: "#fff",
+      border: "1px solid #ddd",
+      borderRadius: "8px",
+      padding: "15px",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+      zIndex: 10000,
+      fontSize: "14px",
+      lineHeight: "1.4"
+    }}
+    onMouseEnter={() => setShowGeneralComment(true)}
+    onMouseLeave={() => setShowGeneralComment(false)}
+  >
+    <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+      📊 Analysis Comment
+    </div>
+    <div style={{ color: "#555" }}>
+      {(() => {
+        if (!summary || !summary.labels.length) {
+          return "No applicant data available for analysis.";
+        }
+        
+        // Create array of label-percentage pairs
+        const data = summary.labels.map((label, index) => ({
+          label,
+          percentage: summary.percentages[index] || 0
+        }));
+        
+        // Sort by percentage descending
+        const sortedData = [...data].sort((a, b) => b.percentage - a.percentage);
+        
+        // Get top 3
+        const top3 = sortedData.slice(0, 3);
+        
+        // Calculate total of top 3
+        const top3Total = top3.reduce((sum, item) => sum + item.percentage, 0);
+        
+        // Check for co-applicant data
+        const hasCoapplicant = coapplicant && coapplicant.coapplicant_rate > 0;
+        
+        return (
+          <>
+            The applicant distribution shows{" "}
+            <strong>{top3[0].label}</strong> as the largest group at{" "}
+            <strong>{top3[0].percentage.toFixed(1)}%</strong>, followed by{" "}
+            <strong>{top3[1].label}</strong> ({top3[1].percentage.toFixed(1)}%) and{" "}
+            <strong>{top3[2].label}</strong> ({top3[2].percentage.toFixed(1)}%).
+            <br /><br />
+            These top 3 applicant types account for{" "}
+            <strong>{top3Total.toFixed(1)}%</strong> of all applications.
+            {hasCoapplicant && (
+              <>
+                {" "}The co-applicant rate of{" "}
+                <strong>{coapplicant.coapplicant_rate.toFixed(2)}%</strong> suggests{" "}
+                {coapplicant.coapplicant_rate > 30 
+                  ? "frequent multi-party applications."
+                  : coapplicant.coapplicant_rate > 15 
+                  ? "moderate collaboration in applications."
+                  : "mostly single-party applications."
+                }
+              </>
+            )}
+          </>
+        );
+      })()}
+    </div>
+    <div style={{ 
+      marginTop: "10px", 
+      fontSize: "12px", 
+      color: "#888",
+      fontStyle: "italic",
+      borderTop: "1px solid #eee",
+      paddingTop: "8px"
+    }}>
+      💡 <strong>Tip:</strong> Hover over pie segments for detailed percentages
+    </div>
+  </div>
+)}
     </div>
   );
 };

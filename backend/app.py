@@ -22,7 +22,7 @@ from outputs.scaler import GlobalScalers
 from market_strategy import (
     load_api_credentials,
     build_token_cache,
-    get_access_token,
+    fetch_legal_raw,
     fetch_legal_xml,
     parse_legal_json_or_xml,
     classify_member_status,
@@ -33,7 +33,8 @@ from market_strategy import (
     ST3_TO_ISO3,
     EP_EXPECTED,
     WO_EXPECTED,
-    build_event_code_lookups
+    build_event_code_lookups,
+    get_access_token as ms_get_access_token,
 )
 
 from db import db, Cost, PatentCost ,LegalXML,MarketStrategy
@@ -2373,19 +2374,22 @@ def create_app():
     @app.route('/api/market_metrics', methods=['GET'])
     def market_metrics():
         try:
+            from db import MarketStrategy
             # Load all patents and cost data from the database
             patents = [p.to_dict() for p in RawPatent.query.all()]
             costs = [c.to_dict() for c in Cost.query.all()]
-            import pandas as pd
+            status = [a.to_dict() for a in MarketStrategy.query.all()]
+            
             patents_df = pd.DataFrame(patents)
             cost_df = pd.DataFrame(costs)
-            
+            status_df = pd.DataFrame(status)
             print(f"[market_metrics] Patents loaded: {len(patents_df)}")
             print(f"[market_metrics] Costs loaded: {len(cost_df)}")
+            print(f"[market_metrics] alive(market_strategy){len(status_df)}")
             
             # Defensive: If either is empty, return zeros
             if patents_df.empty or cost_df.empty:
-                print(f"[market_metrics] WARNING: Empty dataframe - patents: {len(patents_df)}, costs: {len(cost_df)}")
+                print(f"[market_metrics] WARNING: Empty dataframe - patents: {len(patents_df)}, costs: {len(cost_df)}, status : {len(status_df)}")
                 return jsonify({
                 'market_value': 0.0,
                 'market_rate': 0.0,
@@ -2393,6 +2397,7 @@ def create_app():
                 'debug': {
                     'patents_count': len(patents_df),
                     'costs_count': len(cost_df),
+                    'alive_count' : len(status_df),
                     'reason': 'Empty dataframe'
                 }
             }), 200
@@ -2409,20 +2414,14 @@ def create_app():
             print(f"[market_metrics] Null countries: {null_countries}, Null ages: {null_ages}")
             
             # Compute metrics
-            market_value, market_rate, mean_value = get_market_metrics(patents_df, cost_df)
+            market_value, market_rate, mean_value = get_market_metrics(patents_df,status_df, cost_df)
             patents_num = RawPatent.query.count()
             max_id = db.session.query(db.func.max(SearchKeyword.id)).scalar()
             total_results = db.session.query(SearchKeyword.total_results).filter_by(id=max_id).scalar()
             if patents_num >= 500:
                  market_value = (market_value * total_results) / patents_num
             print(f"[market_metrics] Results - MV: {market_value}, MR: {market_rate}, Mean: {mean_value}")
-            
-
-
-
-
-
-            
+                    
             return jsonify({
                 'market_value': float(market_value),
                 'market_rate': float(market_rate),
@@ -5234,7 +5233,7 @@ def create_app():
             _test_cache = build_token_cache([cred])
             try:
                 # get_access_token will populate _test_cache[0]['token'] on success
-                _ = get_access_token(0, [cred], _test_cache)
+                _ = ms_get_access_token(0, [cred], _test_cache)
                 LEGAL_API_CREDS.append(cred)
                 LEGAL_TOKEN_CACHE = build_token_cache(LEGAL_API_CREDS)
             except HTTPError as he:

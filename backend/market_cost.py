@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 from datetime import datetime
 def update_cost_df(cost: pd.DataFrame) -> pd.DataFrame:
   cost_updated = cost.copy()
@@ -80,7 +81,7 @@ def calculate_family_cost(row, cost_df):
     return total_cost
 
 
-def get_market_metrics(patents_df, cost_df):
+def get_market_metrics(patents_df,market_strategy_df, cost_df):
     """
     Calculate:
       - Market value: sum of costs of all family members across all alive patents
@@ -93,12 +94,71 @@ def get_market_metrics(patents_df, cost_df):
         (market_value, market_rate, mean_value)
     """
     patents_df = patents_df.copy()
+    market_strategy_df = market_strategy_df.copy()
+
+    def _normalize_pub(v) -> str:
+        s = str(v or "").upper().strip()
+        return re.sub(r"[^A-Z0-9]", "", s)
+
+    if "publication_number" in patents_df.columns:
+        patents_df["publication_number"] = patents_df["publication_number"].fillna("").astype(str).str.strip()
+    if "first_publication_number" in patents_df.columns:
+        patents_df["first_publication_number"] = patents_df["first_publication_number"].fillna("").astype(str).str.strip()
+
+    if "publication_number" in market_strategy_df.columns:
+        market_strategy_df["publication_number"] = market_strategy_df["publication_number"].fillna("").astype(str).str.strip()
+
+    # Prefer joining on first_publication_number (patents), fallback to publication_number
+    join_src = "first_publication_number" if "first_publication_number" in patents_df.columns else "publication_number"
+    patents_df["_join_pub"] = patents_df[join_src]
+    if "publication_number" in patents_df.columns:
+        patents_df.loc[patents_df["_join_pub"].fillna("").astype(str).str.strip().eq(""), "_join_pub"] = patents_df["publication_number"]
+    patents_df["_join_key"] = patents_df["_join_pub"].apply(_normalize_pub)
+    market_strategy_df["_join_key"] = market_strategy_df["publication_number"].apply(_normalize_pub)
+
+    cols = [c for c in ["_join_key", "publication_number", "legal_status", "family_jurisdictions", "family_members"] if c in market_strategy_df.columns]
+    market_strategy_df = market_strategy_df[cols]
+
+    market_value_df = pd.merge(
+        patents_df,
+        market_strategy_df,
+        on="_join_key",
+        how="left",
+        suffixes=("", "_ms"),
+    )
+
+    def _coalesce_family_field(row, base_col: str):
+        v = row.get(base_col)
+        if isinstance(v, list):
+            if len(v) > 0:
+                return v
+        elif isinstance(v, str):
+            if v.strip():
+                return v
+        else:
+            if pd.notnull(v):
+                return v
+
+        v2 = row.get(f"{base_col}_ms")
+        return v2
+
+    if "family_jurisdictions_ms" in market_value_df.columns:
+        market_value_df["family_jurisdictions"] = market_value_df.apply(
+            lambda r: _coalesce_family_field(r, "family_jurisdictions"), axis=1
+        )
+    if "family_members_ms" in market_value_df.columns:
+        market_value_df["family_members"] = market_value_df.apply(
+            lambda r: _coalesce_family_field(r, "family_members"), axis=1
+        )
 
     # ---- 1. Filter alive patents only ----
-    alive_count = (patents_df["alive_any"] == True).sum()
+    alive_statuses = {"ALIVE", "GRANTED", "PENDING"}
+    legal_status_norm = market_value_df["legal_status"].fillna("").astype(str).str.upper().str.strip()
+    alive_mask = legal_status_norm.isin(alive_statuses)
+    alive_count = int(alive_mask.sum())
     print(f"[get_market_metrics] Total patents: {len(patents_df)}, Alive: {alive_count}")
     
-    alive_df = patents_df[patents_df["alive_any"] == True].copy()
+    alive_df = market_value_df[alive_mask].copy()
 
     if alive_df.empty:
         print(f"[get_market_metrics] No alive patents found")
@@ -126,7 +186,8 @@ def get_market_metrics(patents_df, cost_df):
             return len([x for x in fam.split(",") if x.strip()])
         return 0
 
-    alive_df["family_members_count"] = alive_df["family_jurisdictions"].apply(fam_count)
+    base_for_count = "family_members" if "family_members" in alive_df.columns else "family_jurisdictions"
+    alive_df["family_members_count"] = alive_df[base_for_count].apply(fam_count)
 
     # ---- 4. Compute metrics ----
     market_value = alive_df["family_cost"].dropna().sum()
