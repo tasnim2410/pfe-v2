@@ -1,6 +1,4 @@
-
-
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import LoadingSpinner from "./LoadingSpinner";
 
 const STAGES = [
@@ -43,6 +41,9 @@ function getStage(value: number) {
 export const InnovationCycle: React.FC = () => {
   const [percentage, setPercentage] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showComment, setShowComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
+  const infoIconRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -91,6 +92,20 @@ export const InnovationCycle: React.FC = () => {
       isMounted = false;
     };
   }, []);
+
+  const getInterpretation = (percentage: number, stageLabel: string) => {
+    if (stageLabel === "Emerging") {
+      return "This indicates that the technology is at its earliest phase, with minimal market penetration and high uncertainty. It's a period of initial research and concept development.";
+    } else if (stageLabel === "Beginning") {
+      return "The technology is starting to gain traction with early adopters and initial market entry. This suggests that the technology is still at an early stage but showing promising signs of adoption.";
+    } else if (stageLabel === "Ongoing") {
+      return "This represents a growth phase with increasing adoption and competitive activity. The technology is proving its value and gaining wider acceptance in the market.";
+    } else if (stageLabel === "Slowing") {
+      return "Growth is decelerating, indicating market saturation or the emergence of newer technologies. This phase often sees consolidation and optimization of existing applications.";
+    } else {
+      return "The technology is at the end of its cycle, with declining interest and possible phase-out. This indicates maturity and potential replacement by newer innovations.";
+    }
+  };
 
   if (error) return <div style={{ color: "red" }}>{error}</div>;
   if (percentage === null) return <LoadingSpinner text="Loading innovation cycle..." />;
@@ -153,7 +168,39 @@ export const InnovationCycle: React.FC = () => {
       display: "flex", flexDirection: "column", alignItems: "center", gap: 12,
       padding: "17px 0", background: "#fff", borderRadius: 22,
       boxShadow: "0 2px 18px #B2DBA422", maxWidth: 295, minWidth: 220,
+      position: "relative"
     }}>
+      {/* Info icon at top-right corner of the card */}
+      <div
+        ref={infoIconRef}
+        style={{
+          position: "absolute",
+          top: 5,
+          right: 10,
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "12px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.right, y: rect.top });
+          setShowComment(true);
+        }}
+        onMouseLeave={() => setShowComment(false)}
+      >
+        i
+      </div>
+
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         {STAGES.map((stage, i) => {
           const start = i * anglePerStage - 90;
@@ -221,6 +268,7 @@ export const InnovationCycle: React.FC = () => {
           style={{ filter: "drop-shadow(0 1px 2px #bbb)" }}
         />
       </svg>
+      
       {/* Legend */}
       <div style={{
         display: "flex", flexDirection: "row", gap: 12, marginTop: 3, flexWrap: "wrap", justifyContent: "center",
@@ -259,6 +307,49 @@ export const InnovationCycle: React.FC = () => {
           );
         })}
       </div>
+
+      {/* Comment Block (on hover) */}
+      {showComment && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 250,
+            top: commentPosition.y,
+            width: 280,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.4"
+          }}
+          onMouseEnter={() => setShowComment(true)}
+          onMouseLeave={() => setShowComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            🔄 Innovation Cycle Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            The percentage of patent families on the topic held by the top 10 actors is{" "}
+            <strong>{percentage?.toFixed(2)}%</strong>, which places it in the{" "}
+            <strong style={{ color: activeStage.color }}>{activeStage.label}</strong> stage.
+            <br /><br />
+            {getInterpretation(percentage, activeStage.label)}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Tip:</strong> The arrow indicates the current innovation stage
+          </div>
+        </div>
+      )}
     </div>
   );
 };

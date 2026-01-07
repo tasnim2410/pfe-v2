@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from "react";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -39,6 +38,8 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadingMessage, setLoadingMessage] = useState<string>("Fetching backend port...");
+  const [showComment, setShowComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
 
   const rowRef = useRef<HTMLDivElement>(null);
   const [arrowLeft, setArrowLeft] = useState<number>(0);
@@ -145,6 +146,16 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
     setArrowLeft(offsetLeft + offsetWidth / 2);
   }, [originalityRate]);
 
+  const getInterpretation = (rate: number, stageLabel: string) => {
+    if (stageLabel === "Incremental") {
+      return "This indicates that most patents in this domain are incremental improvements or modifications of existing technologies. The innovation tends to be evolutionary rather than revolutionary, with low novelty and high similarity to prior art.";
+    } else if (stageLabel === "Emerging") {
+      return "This suggests a mix of incremental and novel innovations. The field is showing signs of emerging disruption, with some patents introducing new concepts while others build upon existing ones. It represents a transitional phase in technology development.";
+    } else {
+      return "This indicates highly original and novel patent activity. The field is experiencing disruptive innovation with significant departures from prior art. Such rates suggest breakthrough technologies, new paradigms, or substantial advances beyond existing solutions.";
+    }
+  };
+
   if (error) return <div style={{ color: "#EA3C53" }}>{error}</div>;
   if (isLoading) return <LoadingSpinner text={loadingMessage} />;
   if (originalityRate === null) return <LoadingSpinner text="Loading originality dynamic..." />;
@@ -162,8 +173,39 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
       width: "100%",
       display: "flex",
       flexDirection: "column",
-      alignItems: "center"
+      alignItems: "center",
+      position: "relative"
     }}>
+      {/* Info icon at top-right corner of the card */}
+      <div
+        style={{
+          position: "absolute",
+          top: 5,
+          right: 10,
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "12px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.right, y: rect.top });
+          setShowComment(true);
+        }}
+        onMouseLeave={() => setShowComment(false)}
+      >
+        i
+      </div>
+
       {/* Title */}
       <div style={{
         marginTop: 12,
@@ -282,6 +324,49 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
           </span>
         )}
       </div>
+
+      {/* Comment Block (on hover) */}
+      {showComment && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 250,
+            top: commentPosition.y,
+            width: 280,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.4"
+          }}
+          onMouseEnter={() => setShowComment(true)}
+          onMouseLeave={() => setShowComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            🧠 Originality Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            The originality rate of <strong>{(originalityRate * 100).toFixed(2)}%</strong> 
+            {totalPatents && validPatents && ` (based on ${validPatents} valid patents out of ${totalPatents})`} 
+            places it in the <strong style={{ color: stage.color }}>{stage.label}</strong> category.
+            <br /><br />
+            {getInterpretation(originalityRate, stage.label)}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Tip:</strong> Originality rate measures how novel patent claims are compared to prior art
+          </div>
+        </div>
+      )}
     </div>
   );
 };

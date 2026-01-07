@@ -20,8 +20,11 @@ export const MarketSizeCard: React.FC = () => {
   const cellRefs = useRef<HTMLDivElement[]>([]);
   const [arrowLeft, setArrowLeft] = useState(0);
   const [sizeState, setSizeState] = useState<Size | null>(null);
+  const [marketValue, setMarketValue] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showComment, setShowComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
   const hasRunRef = useRef(false);
 
   // Fetch market metrics and classify market size
@@ -71,6 +74,8 @@ export const MarketSizeCard: React.FC = () => {
         
         const mv = Number(metrics?.market_value ?? 0);
         console.log("Market value:", mv);
+        
+        setMarketValue(mv);
 
         // Classify by fixed thresholds:
         // < 10M = small, 10M-100M = medium, > 100M = big
@@ -105,6 +110,25 @@ export const MarketSizeCard: React.FC = () => {
     }
   }, [sizeState]);
 
+  const formatMoney = (value: number): string => {
+    if (value >= 1_000_000) {
+      return `${(value / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}M$`;
+    } else if (value >= 1_000) {
+      return `${(value / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 })}K$`;
+    }
+    return `${value.toLocaleString()}$`;
+  };
+
+  const getInterpretation = (size: Size, value: number): string => {
+    if (size === "small") {
+      return "This indicates a niche or emerging market with limited patent investment activity. Small markets typically represent early-stage technologies, specialized applications, or domains with limited commercial interest. They may offer opportunities for early entry but come with higher uncertainty.";
+    } else if (size === "medium") {
+      return "This represents a maturing market with significant but not overwhelming investment. Medium-sized markets suggest growing industry interest, increasing competition, and established use cases. They often indicate technologies transitioning from research to commercialization.";
+    } else {
+      return "This signifies a large, established market with substantial patent investment. Big markets indicate high technological intensity, significant commercial value, and strong competitive dynamics. They typically represent mature technologies with broad applications and high market expectations.";
+    }
+  };
+
   return (
     <div
       style={{
@@ -116,8 +140,39 @@ export const MarketSizeCard: React.FC = () => {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
+        position: "relative"
       }}
     >
+      {/* Info icon at top-right corner */}
+      <div
+        style={{
+          position: "absolute",
+          top: 5,
+          right: 10,
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "12px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.right, y: rect.top });
+          setShowComment(true);
+        }}
+        onMouseLeave={() => setShowComment(false)}
+      >
+        i
+      </div>
+
       {/* Title */}
       <div
         style={{
@@ -244,9 +299,67 @@ export const MarketSizeCard: React.FC = () => {
             <span style={{ color: "#BDD248", fontWeight: 700 }}>
               {sizeState.toUpperCase()}
             </span>
+            {marketValue !== null && (
+              <span style={{ color: "#666", marginLeft: 8 }}>
+                ({formatMoney(marketValue)})
+              </span>
+            )}
           </div>
         </>
       ) : null}
+
+      {/* Comment Block (on hover) */}
+      {showComment && sizeState && marketValue !== null && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 250,
+            top: commentPosition.y,
+            width: 280,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.5"
+          }}
+          onMouseEnter={() => setShowComment(true)}
+          onMouseLeave={() => setShowComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            📈 Market Size Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            The total patent investment of <strong>{formatMoney(marketValue)}</strong> places this technology in the{" "}
+            <strong style={{ color: STAGES.find(s => s.key === sizeState)?.color }}>{sizeState.toUpperCase()}</strong> market category.
+            <br /><br />
+            {getInterpretation(sizeState, marketValue)}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Classification Thresholds:</strong><br />
+            • Small: &lt; $10M<br />
+            • Medium: $10M - $100M<br />
+            • Big: &gt; $100M
+          </div>
+          <div style={{ 
+            marginTop: "8px", 
+            fontSize: "11px", 
+            color: "#999",
+            fontStyle: "italic"
+          }}>
+            <strong>Note:</strong> Based on the sum of patent family costs 
+          </div>
+        </div>
+      )}
     </div>
   );
 };

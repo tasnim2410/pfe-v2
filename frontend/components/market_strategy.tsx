@@ -1,5 +1,6 @@
 // MarketStrategyCard.tsx
 import React, { useEffect, useRef, useState } from "react";
+import LoadingSpinner from "./LoadingSpinner";
 
 /* ── STAGES ────────────────────────────────────────────────────────────── */
 type Level = "local" | "main markets" | "global";
@@ -23,6 +24,8 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [msiValue, setMsiValue] = useState<number | null>(null); // Added state for MSI value
+  const [showComment, setShowComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
   
   /* arrow centre pos */
   const [arrowLeft, setLeft] = useState(0);
@@ -32,16 +35,10 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
   const cellRefs = useRef<HTMLDivElement[]>([]);
   
   /* Refs to prevent double fetching and abort ongoing requests */
-  const hasFetchedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   /* Fetch data from APIs */
   useEffect(() => {
-    // Prevent double calls in Strict Mode
-    if (hasFetchedRef.current) {
-      return;
-    }
-    
     // Cancel any existing request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -53,7 +50,6 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
     
     const fetchData = async () => {
       try {
-        hasFetchedRef.current = true;
         setLoading(true);
         setError(null);
 
@@ -134,9 +130,6 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         // Don't set error if request was aborted
         if (signal.aborted) return;
         
-        // Reset the fetch flag on error so it can retry
-        hasFetchedRef.current = false;
-        
         setError(err instanceof Error ? err.message : 'An unknown error occurred');
       } finally {
         // Only update loading state if not aborted
@@ -166,6 +159,16 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
     }
   }, [level]);
 
+  const getInterpretation = (msi: number, level: Level): string => {
+    if (level === "local") {
+      return "This indicates that patent protection is focused on specific regions or countries. Local strategies are common for technologies with regulatory constraints, niche applications, or when companies are testing markets before broader expansion.";
+    } else if (level === "main markets") {
+      return "This suggests protection in key economic regions (e.g., US, EU, JP, CN). Main market strategies are typical for technologies with established commercial value where companies focus on major markets with high GDP and strong IP enforcement.";
+    } else {
+      return "This indicates comprehensive worldwide patent protection. Global strategies are common for breakthrough technologies, pharmaceuticals, or when companies aim to establish dominant positions across all major markets simultaneously.";
+    }
+  };
+
   if (loading) {
     return (
       <div style={{
@@ -175,7 +178,7 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         padding: "20px",
         textAlign: "center"
       }}>
-        Loading market data...
+        <LoadingSpinner text="Loading market data..." height={120} />
       </div>
     );
   }
@@ -206,8 +209,39 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
+        position: "relative"
       }}
     >
+      {/* Info icon at top-right corner */}
+      <div
+        style={{
+          position: "absolute",
+          top: 5,
+          right: 10,
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "12px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.right, y: rect.top });
+          setShowComment(true);
+        }}
+        onMouseLeave={() => setShowComment(false)}
+      >
+        i
+      </div>
+
       {/* Title */}
       <div
         style={{
@@ -333,6 +367,62 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
           {msiValue !== null ? msiValue.toFixed(2) : "N/A"}
         </span>
       </div>
+
+      {/* Comment Block (on hover) */}
+      {showComment && msiValue !== null && level && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 250,
+            top: commentPosition.y,
+            width: 280,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.5"
+          }}
+          onMouseEnter={() => setShowComment(true)}
+          onMouseLeave={() => setShowComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            🎯 Market Strategy Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            The Market Strategy Index of <strong>{msiValue.toFixed(2)}</strong> indicates a{" "}
+            <strong style={{ color: STAGES.find(s => s.key === level)?.color }}>{level.toUpperCase()}</strong> strategy.
+            <br /><br />
+            {getInterpretation(msiValue, level)}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>How MSI is calculated:</strong><br />
+            • Sum of GDP of countries protected by patent family<br />
+            • 40% reduction for pending countries<br />
+            • Normalized to 1.0 for US-only granted patent
+          </div>
+          <div style={{ 
+            marginTop: "8px", 
+            fontSize: "11px", 
+            color: "#999",
+            fontStyle: "italic"
+          }}>
+            <strong>Classification Thresholds:</strong><br />
+            • Local: MSI &lt; 0.6<br />
+            • Main Markets: 0.6 ≤ MSI &lt; 0.9<br />
+            • Global: MSI ≥ 0.9
+          </div>
+        </div>
+      )}
     </div>
   );
 };

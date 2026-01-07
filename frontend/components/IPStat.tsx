@@ -1,7 +1,3 @@
-
-
-
-
 import React, { useEffect, useRef, useState } from "react";
 import LoadingSpinner from "./LoadingSpinner";
 
@@ -43,7 +39,11 @@ interface MarketMetrics {
 type ChartProps = { width?: number; height?: number };
 export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
   const [metrics, setMetrics] = useState<MarketMetrics | null>(null);
+  const [alivePatents, setAlivePatents] = useState<number | null>(null);
+  const [totalFamilyMembers, setTotalFamilyMembers] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showComment, setShowComment] = useState(false);
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -76,15 +76,21 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
           signal,
         });
         if (!metricsRes.ok) throw new Error(`Metrics HTTP ${metricsRes.status}`);
-        const raw: MarketMetrics = await metricsRes.json();
+        const raw: any = await metricsRes.json();
+        
+        // Extract metrics based on backend calculation
         const data: MarketMetrics = {
-          market_rate: Number((raw as any)?.market_rate ?? 0),
-          market_value: Number((raw as any)?.market_value ?? 0),
-          mean_value: Number((raw as any)?.mean_value ?? 0),
+          market_rate: Number(raw?.market_rate ?? 0),
+          market_value: Number(raw?.market_value ?? 0),
+          mean_value: Number(raw?.mean_value ?? 0),
         };
 
+        // Extract additional debug info if available
+        if (raw?.alive_count !== undefined) setAlivePatents(Number(raw.alive_count));
+        if (raw?.total_family_members !== undefined) setTotalFamilyMembers(Number(raw.total_family_members));
+
         console.log("[IPStat] backend port:", trimmedPort);
-        console.log("[IPStat] /api/market_metrics response:", raw, "normalized:", data);
+        console.log("[IPStat] /api/market_metrics response:", raw);
 
         setMetrics(data);
       } catch (err) {
@@ -100,16 +106,6 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
     };
   }, []);
 
-  if (error) {
-    return <div style={{ color: "red" }}>{error}</div>;
-  }
-
-  if (!metrics) {
-    return <LoadingSpinner text="Loading market metrics..." />;
-  }
-
-  const { market_rate, mean_value, market_value } = metrics;
-
   // Helper to format numbers as K/M with $ sign
   function formatMoney(value: number): string {
     if (value >= 1_000_000) {
@@ -120,6 +116,29 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
     return `${value.toLocaleString()}$`;
   }
 
+  const getInterpretation = (metrics: MarketMetrics) => {
+    return `These metrics are calculated based on patent family costs estimated for 2018-2020:
+    
+• **IP Market Rate (${metrics.market_rate.toFixed(2)})**: Average number of family members per alive patent. 
+  ${totalFamilyMembers && alivePatents ? `Calculated as ${totalFamilyMembers} family members ÷ ${alivePatents} alive patents.` : ''}
+
+• **IP Mean Value (${formatMoney(metrics.mean_value)})**: Average cost per alive patent family.
+  ${alivePatents ? `Calculated as total market value ÷ ${alivePatents} alive patents.` : ''}
+
+• **IP Total Value (${formatMoney(metrics.market_value)})**: Sum of costs for all family members across alive patents.
+  Based on patent age and jurisdiction costs.`;
+  };
+
+  if (error) {
+    return <div style={{ color: "red" }}>{error}</div>;
+  }
+
+  if (!metrics) {
+    return <LoadingSpinner text="Loading market metrics..." />;
+  }
+
+  const { market_rate, mean_value, market_value } = metrics;
+
   return (
     <div
       style={{
@@ -129,8 +148,39 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
         width: "100%",
         maxWidth: 180,
         background: "transparent",
+        position: "relative"
       }}
     >
+      {/* Info icon at top-right corner */}
+      <div
+        style={{
+          position: "absolute",
+          top: -5,
+          right: 5,
+          width: 20,
+          height: 20,
+          borderRadius: "50%",
+          backgroundColor: "#f0f0f0",
+          border: "1px solid #ccc",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          fontSize: "12px",
+          fontWeight: "bold",
+          color: "#666",
+          zIndex: 10
+        }}
+        onMouseEnter={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCommentPosition({ x: rect.right, y: rect.top });
+          setShowComment(true);
+        }}
+        onMouseLeave={() => setShowComment(false)}
+      >
+        i
+      </div>
+
       {/* IP Market Rate */}
       <div style={labelStyle}>IP Market Rate</div>
       <div style={valueBoxStyle}>{market_rate.toFixed(2)}</div>
@@ -142,9 +192,61 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
       {/* IP Total Value */}
       <div style={labelStyle}>IP Total Value</div>
       <div style={valueBoxStyle}>{formatMoney(market_value)}</div>
+
+      {/* Comment Block (on hover) */}
+      {showComment && metrics && (
+        <div
+          style={{
+            position: "fixed",
+            left: commentPosition.x - 250,
+            top: commentPosition.y,
+            width: 280,
+            background: "#fff",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            padding: "15px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            zIndex: 10000,
+            fontSize: "14px",
+            lineHeight: "1.5"
+          }}
+          onMouseEnter={() => setShowComment(true)}
+          onMouseLeave={() => setShowComment(false)}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
+            📊 IP Market Metrics Analysis
+          </div>
+          <div style={{ color: "#555" }}>
+            {getInterpretation(metrics)}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "12px", 
+            color: "#888",
+            fontStyle: "italic",
+            borderTop: "1px solid #eee",
+            paddingTop: "8px"
+          }}>
+            💡 <strong>Backend Details:</strong> Costs are calculated using patent age and jurisdiction mapping to reference countries
+          </div>
+          {alivePatents !== null && (
+            <div style={{ 
+              marginTop: "8px", 
+              fontSize: "11px", 
+              color: "#999",
+              fontStyle: "italic",
+              backgroundColor: "#f8f9fa",
+              padding: "6px",
+              borderRadius: "4px"
+            }}>
+              <strong>Calculation Basis:</strong> Based on {alivePatents} alive patents
+              {totalFamilyMembers !== null && ` with ${totalFamilyMembers} family members`}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
 export default IpStatsBox;
-
