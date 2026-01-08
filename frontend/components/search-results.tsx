@@ -469,11 +469,14 @@ import { ExternalLink, X } from "lucide-react"
 import MarketStrategyCard from "./market_strategy";
 import MarketSizeCard from "./market_size";
 
+type SearchScope = 'patents' | 'papers' | 'both';
+
 interface SearchResultsProps {
   hasSearched: boolean;
   results?: any[];
   papers?: any[];              // <--- NEW
   loading?: boolean;
+  searchScope?: SearchScope;
 }
 
 const summaryCards = [
@@ -500,11 +503,17 @@ import IpStatsBox from './IPStat';
 import AnalysisSummaryCard from './analysis-summary';
 import SearchHistoryChart from './search_history';
 
-export function SearchResults({ hasSearched, results, papers = [], loading }: SearchResultsProps) {
+export function SearchResults({ hasSearched, results, papers = [], loading, searchScope = 'both' }: SearchResultsProps) {
   const [visibleCards, setVisibleCards] = useState<string[]>([])
   const [rowCount, setRowCount] = useState<number | 'all'>(10);
   const [paperRowCount, setPaperRowCount] = useState<number | 'all'>(10);
-  const [activeTab, setActiveTab] = useState<'patents' | 'papers' | 'summary'>('patents');  // <--- include 'papers'
+  const [activeTab, setActiveTab] = useState<'patents' | 'papers' | 'summary'>(searchScope === 'papers' ? 'papers' : 'patents');  // <--- include 'papers'
+
+  React.useEffect(() => {
+    if (!hasSearched) return;
+    if (searchScope === 'papers') setActiveTab('papers');
+    if (searchScope === 'patents') setActiveTab('patents');
+  }, [hasSearched, searchScope]);
 
   const showCard = (cardId: string) => {
     setVisibleCards([...visibleCards, cardId])
@@ -800,7 +809,11 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
                   </select>
                 </div>
               </div>
-              <CardDescription>Found {results && results.length} patents matching your criteria</CardDescription>
+              <CardDescription>
+                {searchScope === 'papers'
+                  ? 'No data available (patents search disabled)'
+                  : `Found ${results && results.length} patents matching your criteria`}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -818,11 +831,12 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {results && results.length > 0 ?
-                    (rowCount === 'all'
-                      ? results
-                      : results.slice(0, rowCount)
-                    ).map((patent: any, idx: number) => (
+                  {searchScope === 'papers' ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-gray-500">No data available</TableCell>
+                    </TableRow>
+                  ) : results && results.length > 0 ? (
+                    (rowCount === 'all' ? results : results.slice(0, rowCount)).map((patent: any, idx: number) => (
                       <TableRow key={patent["Publication number"] || idx}>
                         <TableCell>
                           {typeof patent["Publication number"] === "string"
@@ -881,11 +895,12 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
                         <TableCell>{patent["earliest_publication"]}</TableCell>
                         <TableCell>{patent["first_filing_year"]}</TableCell>
                       </TableRow>
-                    )) : (
-                      <TableRow>
-                        <TableCell colSpan={9} className="text-center text-gray-500">No results found</TableCell>
-                      </TableRow>
-                    )}
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-gray-500">No results found</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -926,7 +941,11 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
                 </select>
               </div>
             </div>
-            <CardDescription>Found {papers && papers.length} papers via scientific search</CardDescription>
+            <CardDescription>
+              {searchScope === 'patents'
+                ? 'No data available (papers search disabled)'
+                : `Found ${papers && papers.length} papers via scientific search`}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -942,7 +961,11 @@ export function SearchResults({ hasSearched, results, papers = [], loading }: Se
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {papers && papers.length > 0 ? (
+                {searchScope === 'patents' ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-gray-500">No data available</TableCell>
+                  </TableRow>
+                ) : papers && papers.length > 0 ? (
                   (paperRowCount === 'all' ? papers : papers.slice(0, paperRowCount)).map((p: any, idx: number) => (
                     <TableRow key={p.paper_id || p.id || idx}>
                       <TableCell style={{ maxWidth: 520 }}>

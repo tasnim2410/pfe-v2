@@ -44,22 +44,21 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
   const [error, setError] = useState<string | null>(null);
   const [showComment, setShowComment] = useState(false);
   const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
-  const abortRef = useRef<AbortController | null>(null);
+  const hasRunRef = useRef(false);
 
   useEffect(() => {
-    if (abortRef.current) abortRef.current.abort();
-    abortRef.current = new AbortController();
-    const signal = abortRef.current.signal;
+    if (hasRunRef.current) return;
+    hasRunRef.current = true;
 
     const run = async () => {
       try {
-        const portRes = await fetch("/backend_port.txt", { signal });
+        const portRes = await fetch("/backend_port.txt");
         if (!portRes.ok) throw new Error(`Port file HTTP ${portRes.status}`);
         const trimmedPort = (await portRes.text()).trim();
         const baseUrl = `http://localhost:${trimmedPort}`;
 
         const postOk = async (path: string) => {
-          const res = await fetch(`${baseUrl}${path}`, { method: "POST", signal });
+          const res = await fetch(`${baseUrl}${path}`, { method: "POST" });
           if (!res.ok) {
             const details = await res.text().catch(() => "");
             throw new Error(`${path} HTTP ${res.status}${details ? `: ${details}` : ""}`);
@@ -73,11 +72,10 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
 
         const metricsRes = await fetch(`${baseUrl}/api/market_metrics?t=${Date.now()}`, {
           cache: "no-store",
-          signal,
         });
         if (!metricsRes.ok) throw new Error(`Metrics HTTP ${metricsRes.status}`);
         const raw: any = await metricsRes.json();
-        
+
         // Extract metrics based on backend calculation
         const data: MarketMetrics = {
           market_rate: Number(raw?.market_rate ?? 0),
@@ -94,16 +92,12 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
 
         setMetrics(data);
       } catch (err) {
-        if (signal.aborted) return;
         console.error(err);
         setError("Failed to load market cost or metrics");
       }
     };
 
     run();
-    return () => {
-      if (abortRef.current) abortRef.current.abort();
-    };
   }, []);
 
   // Helper to format numbers as K/M with $ sign

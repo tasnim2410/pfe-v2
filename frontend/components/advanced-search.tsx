@@ -9,6 +9,8 @@ import { SearchResults } from './search-results';
 // Define types for the query structure
 type QueryNode = Keyword | Group;
 
+type SearchScope = 'patents' | 'papers' | 'both';
+
 interface Keyword {
   type: 'keyword';
   word: string;
@@ -160,6 +162,7 @@ const AdvancedSearchBar: React.FC = () => {
   });
   const [results, setResults] = useState<any[] | null>(null);
   const [papers, setPapers] = useState<any[] | null>(null);
+  const [searchScope, setSearchScope] = useState<SearchScope>('both');
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -306,47 +309,49 @@ const AdvancedSearchBar: React.FC = () => {
     try {
       if (!backendPort) throw new Error('Backend port not loaded');
 
-      // 1) Kick off patent search (POST /api/search)
-      const patentReq = fetch(`http://localhost:${backendPort}/api/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(getQueryForEndpoint()),
-      });
+      const doPatents = searchScope === 'patents' || searchScope === 'both';
+      const doPapers = searchScope === 'papers' || searchScope === 'both';
 
-      // 2) Build flat boolean string, and call the *merge* endpoint (POST /api/scientific_search_merge)
-      const sciQuery = buildQueryString(rootGroup);
-      const sciMergeReq = sciQuery
-        ? fetch(`http://localhost:${backendPort}/api/scientific_search_merge`, {
+      let resultsArray: any[] = [];
+      let papersArray: any[] = [];
+
+      if (doPatents) {
+        const patentRes = await fetch(`http://localhost:${backendPort}/api/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(getQueryForEndpoint()),
+        });
+        if (!patentRes.ok) throw new Error('Failed to fetch patent search results');
+
+        const patentData = await patentRes.json();
+        if (Array.isArray(patentData)) {
+          resultsArray = patentData;
+        } else if (Array.isArray(patentData.results)) {
+          resultsArray = patentData.results;
+        } else if (Array.isArray(patentData.patents)) {
+          resultsArray = patentData.patents;
+        }
+      }
+
+      if (doPapers) {
+        const sciQuery = buildQueryString(rootGroup);
+        if (sciQuery) {
+          const mergeRes = await fetch(`http://localhost:${backendPort}/api/scientific_search_merge`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: sciQuery }), // the merge endpoint expects a flat string
-          })
-        : Promise.resolve(new Response(JSON.stringify({ message: "skipped" }), { status: 200 }));
+            body: JSON.stringify({ query: sciQuery }),
+          });
+          if (!mergeRes.ok) throw new Error('Failed to merge scientific results');
 
-      // 3) Wait for both to finish
-      const [patentRes, mergeRes] = await Promise.all([patentReq, sciMergeReq]);
-
-      if (!patentRes.ok) throw new Error('Failed to fetch patent search results');
-      // mergeRes returns only counts/message; no rows inside — that’s expected.
-      if (!mergeRes.ok) throw new Error('Failed to merge scientific results');
-
-      // 4) Parse patents
-      const patentData = await patentRes.json();
-      let resultsArray: any[] = [];
-      if (Array.isArray(patentData)) {
-        resultsArray = patentData;
-      } else if (Array.isArray(patentData.results)) {
-        resultsArray = patentData.results;
-      } else if (Array.isArray(patentData.patents)) {
-        resultsArray = patentData.patents;
+          const papersRes = await fetch(`http://localhost:${backendPort}/api/research/papers?limit=500&sort_by=citations&order=desc`);
+          if (!papersRes.ok) throw new Error('Failed to fetch stored papers');
+          const papersData = await papersRes.json();
+          papersArray = Array.isArray(papersData) ? papersData : [];
+        }
       }
-      setResults(resultsArray);
 
-      // 5) Now fetch the stored papers from GET /api/research/papers
-      const papersRes = await fetch(`http://localhost:${backendPort}/api/research/papers?limit=500&sort_by=citations&order=desc`);
-      if (!papersRes.ok) throw new Error('Failed to fetch stored papers');
-      const papersData = await papersRes.json(); // already an array of rows
-      setPapers(Array.isArray(papersData) ? papersData : []);
+      setResults(resultsArray);
+      setPapers(papersArray);
 
     } catch (e: any) {
       setError(e.message || 'Unknown error');
@@ -362,7 +367,20 @@ const AdvancedSearchBar: React.FC = () => {
   return (
     <div style={{ background: '#f5f5f5', borderRadius: 12, padding: 0 }}>
       <GroupComponent group={rootGroup} path={[]} onAction={handleAction} />
-      <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%', marginTop: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%', marginTop: 10, gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <label style={{ fontWeight: 600, fontSize: 14, color: '#111' }}>Search in:</label>
+          <select
+            value={searchScope}
+            onChange={(e) => setSearchScope(e.target.value as SearchScope)}
+            style={{ ...selectStyle, minWidth: 160, flex: 'initial' }}
+            disabled={loading}
+          >
+            <option value="both">Patents + Papers</option>
+            <option value="patents">Patents only</option>
+            <option value="papers">Papers only</option>
+          </select>
+        </div>
         <button
           onClick={handleSearch}
           style={{ ...buttonStyle, minWidth: 120 }}
@@ -375,7 +393,7 @@ const AdvancedSearchBar: React.FC = () => {
         <div style={{ color: 'red', margin: '10px 0', textAlign: 'right' }}>{error}</div>
       )}
       <div style={{ marginTop: 24 }}>
-        <SearchResults hasSearched={hasSearched} results={results || []} loading={loading} papers={papers || []} />
+        <SearchResults hasSearched={hasSearched} results={results || []} loading={loading} papers={papers || []} searchScope={searchScope} />
       </div>
     </div>
   );

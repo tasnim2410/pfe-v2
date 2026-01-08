@@ -23,59 +23,59 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
   const [level, setLevel] = useState<Level>("main markets");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [msiValue, setMsiValue] = useState<number | null>(null); // Added state for MSI value
+  const [msiValue, setMsiValue] = useState<number | null>(null);
   const [showComment, setShowComment] = useState(false);
   const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
   
   /* arrow centre pos */
-  const [arrowLeft, setLeft] = useState(0);
+  const [arrowLeft, setArrowLeft] = useState(0);
+  const [arrowContainerWidth, setArrowContainerWidth] = useState(0);
 
   /* refs to measure exact cell width */
   const rowRef   = useRef<HTMLDivElement>(null);
   const cellRefs = useRef<HTMLDivElement[]>([]);
-  
-  /* Refs to prevent double fetching and abort ongoing requests */
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const arrowContainerRef = useRef<HTMLDivElement>(null);
+  const hasRunRef = useRef(false);
+  const lastPortRef = useRef<number | undefined>(undefined);
 
   /* Fetch data from APIs */
   useEffect(() => {
-    // Cancel any existing request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    
-    // Create new AbortController
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+    if (hasRunRef.current && lastPortRef.current === port) return;
+    hasRunRef.current = true;
+    lastPortRef.current = port;
     
     const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        // Resolve backend port
         let portStr: string | undefined = port ? String(port) : undefined;
         if (!portStr) {
           try {
-            const portResponse = await fetch("/backend_port.txt", { signal });
-            if (signal.aborted) return;
+            const portResponse = await fetch("/backend_port.txt");
             portStr = (await portResponse.text()).trim();
           } catch (e) {
-            if (signal.aborted) return;
             throw new Error("Failed to read backend port");
           }
         }
 
         // First: fetch/update legal XML
-        const opsResponse = await fetch(
-          `http://localhost:${portStr}/api/legal_status/fetch_xml`,
-          { signal }
-        );
-        if (signal.aborted) return;
+        const opsResponse = await fetch(`http://localhost:${portStr}/api/legal_status/fetch_xml`, {
+          method: "POST",
+        });
         
         if (!opsResponse.ok) {
           throw new Error(`Legal status request failed (${opsResponse.status})`);
         }
+        
+        const familyResponse = await fetch(`http://localhost:${portStr}/api/family_members/ops`, {
+          method: "POST",
+        });
+        
+        if (!familyResponse.ok) {
+          throw new Error(`Family members request failed (${familyResponse.status})`);
+        }
+        
         const _opsData = await opsResponse.json();
 
         // Second: load patent statuses into market_strategy table
@@ -85,34 +85,28 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
-            signal
           }
         );
-        if (signal.aborted) return;
         
         if (!loadResponse.ok) {
           throw new Error(`Market strategy load request failed (${loadResponse.status})`);
         }
         const loadData = await loadResponse.json();
         
-        // Expected format: { success, total, inserted, updated }
         if (!loadData || loadData.success !== true) {
           throw new Error('Market strategy load did not complete successfully');
         }
 
         // Third: compute MSI and get summary
         const summaryResponse = await fetch(
-          `http://localhost:${portStr}/api/market_strategy/compute_market_strategy`,
-          { signal }
+          `http://localhost:${portStr}/api/market_strategy/compute_market_strategy`
         );
-        if (signal.aborted) return;
         
         if (!summaryResponse.ok) {
           throw new Error(`Market strategy summary request failed (${summaryResponse.status})`);
         }
         const summaryData = await summaryResponse.json();
 
-        // Determine level based on MSI and store value
         const avgMsi = Number(
           summaryData?.technology_msi ?? summaryData?.avg_msi ?? 0
         );
@@ -127,45 +121,80 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         }
         
       } catch (err) {
-        // Don't set error if request was aborted
-        if (signal.aborted) return;
-        
         setError(err instanceof Error ? err.message : 'An unknown error occurred');
       } finally {
-        // Only update loading state if not aborted
-        if (!signal.aborted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     };
 
     fetchData();
-
-    // Cleanup function
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
   }, [port]);
 
   /* calculate arrow whenever level or layout changes */
   useEffect(() => {
-    const idx = STAGES.findIndex((s) => s.key === level);
-    const el  = cellRefs.current[idx];
-    if (el && rowRef.current) {
-      const { offsetLeft, offsetWidth } = el;
-      setLeft(offsetLeft + offsetWidth / 2);
-    }
+    const calculateArrowPosition = () => {
+      if (!arrowContainerRef.current || !rowRef.current) return;
+      
+      const containerWidth = arrowContainerRef.current.offsetWidth;
+      setArrowContainerWidth(containerWidth);
+      
+      const idx = STAGES.findIndex((s) => s.key === level);
+      const el = cellRefs.current[idx];
+      
+      if (el && rowRef.current) {
+        // Calculate position relative to the container
+        const stageRect = el.getBoundingClientRect();
+        const containerRect = arrowContainerRef.current.getBoundingClientRect();
+        
+        // Calculate center of the stage relative to container
+        const stageCenter = stageRect.left - containerRect.left + (stageRect.width / 2);
+        setArrowLeft(stageCenter);
+      }
+    };
+
+    // Calculate initially
+    calculateArrowPosition();
+    
+    // Recalculate on window resize
+    window.addEventListener('resize', calculateArrowPosition);
+    
+    return () => {
+      window.removeEventListener('resize', calculateArrowPosition);
+    };
   }, [level]);
 
   const getInterpretation = (msi: number, level: Level): string => {
     if (level === "local") {
-      return "This indicates that patent protection is focused on specific regions or countries. Local strategies are common for technologies with regulatory constraints, niche applications, or when companies are testing markets before broader expansion.";
+      return `The MSI of ${msi.toFixed(2)} indicates a LOCAL market strategy. This suggests the technology is protected primarily in specific countries or regions rather than globally. This could indicate:
+• Early-stage technology where market testing is ongoing
+• Niche applications with limited geographic relevance
+• Regulatory constraints limiting global protection
+• Cost-conscious IP strategy focusing on key markets
+• Technology with regional market preferences or standards`;
     } else if (level === "main markets") {
-      return "This suggests protection in key economic regions (e.g., US, EU, JP, CN). Main market strategies are typical for technologies with established commercial value where companies focus on major markets with high GDP and strong IP enforcement.";
+      return `The MSI of ${msi.toFixed(2)} indicates a MAIN MARKETS strategy. This suggests the technology is protected in key economic regions (typically US, EU, JP, CN). This often indicates:
+• Established technology with proven commercial value
+• Strategic focus on high-GDP markets with strong IP enforcement
+• Balanced approach between protection breadth and cost
+• Technology relevant to major industrial economies
+• Companies targeting leading markets while managing IP costs`;
     } else {
-      return "This indicates comprehensive worldwide patent protection. Global strategies are common for breakthrough technologies, pharmaceuticals, or when companies aim to establish dominant positions across all major markets simultaneously.";
+      return `The MSI of ${msi.toFixed(2)} indicates a GLOBAL market strategy. This suggests comprehensive worldwide patent protection. This typically indicates:
+• Breakthrough or foundational technology
+• Pharmaceutical or medical device inventions requiring global protection
+• Technologies with universal applications across all markets
+• Companies establishing dominant market positions
+• High-value inventions justifying global IP investment`;
+    }
+  };
+
+  const getStrategicImplications = (msi: number, level: Level): string => {
+    if (level === "local") {
+      return "Implications: Lower competitive barriers globally, potential for market entry by competitors in unprotected regions, focus on specific regulatory environments.";
+    } else if (level === "main markets") {
+      return "Implications: Strong protection in key economic zones, moderate barriers to entry in primary markets, opportunity for regional licensing strategies.";
+    } else {
+      return "Implications: High barriers to entry globally, strong market exclusivity, potential for broad licensing revenue, significant competitive advantage.";
     }
   };
 
@@ -234,7 +263,10 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         }}
         onMouseEnter={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
-          setCommentPosition({ x: rect.right, y: rect.top });
+          setCommentPosition({ 
+            x: Math.min(rect.right, window.innerWidth - 300), 
+            y: rect.bottom + 5 
+          });
           setShowComment(true);
         }}
         onMouseLeave={() => setShowComment(false)}
@@ -259,8 +291,9 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         Market Strategy
       </div>
 
-      {/* Arrow */}
+      {/* Arrow container - FIXED POSITIONING */}
       <div
+        ref={arrowContainerRef}
         style={{
           height: arrowBoxHeight,
           width: "100%",
@@ -268,6 +301,7 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
           display: "flex",
           alignItems: "flex-end",
           marginBottom: "-1px",
+          overflow: "visible"
         }}
       >
         <svg
@@ -279,14 +313,19 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
             top: 0,
             pointerEvents: "none",
             zIndex: 3,
+            overflow: "visible"
           }}
         >
+          {/* Arrow with precise positioning */}
           <polygon
             points={`${arrowLeft - 10},${arrowBoxHeight - arrowHeight}
                      ${arrowLeft + 10},${arrowBoxHeight - arrowHeight}
                      ${arrowLeft},${arrowBoxHeight - 2}`}
             fill="#232526"
-            style={{ filter: "drop-shadow(0 2px 2px #B2DBA4AA)" }}
+            style={{ 
+              filter: "drop-shadow(0 2px 2px #B2DBA4AA)",
+              transition: "all 0.3s ease"
+            }}
           />
         </svg>
       </div>
@@ -302,6 +341,7 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
           overflow: "hidden",
           boxShadow: "0 1px 6px #bbb5",
           width: "100%",
+          position: "relative"
         }}
       >
         {STAGES.map((s, i) => (
@@ -324,6 +364,7 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
                 s.key === level ? "brightness(1.1) saturate(1.35)" : "none",
               transition: "all 0.3s",
               wordBreak: "break-word",
+              position: "relative"
             }}
           >
             {s.label}
@@ -373,9 +414,9 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
         <div
           style={{
             position: "fixed",
-            left: commentPosition.x - 250,
+            left: commentPosition.x,
             top: commentPosition.y,
-            width: 280,
+            width: 320,
             background: "#fff",
             border: "1px solid #ddd",
             borderRadius: "8px",
@@ -388,38 +429,79 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
           onMouseEnter={() => setShowComment(true)}
           onMouseLeave={() => setShowComment(false)}
         >
-          <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#333", fontSize: "15px" }}>
-            🎯 Market Strategy Analysis
+          <div style={{ 
+            fontWeight: "bold", 
+            marginBottom: "8px", 
+            color: "#333", 
+            fontSize: "15px",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px"
+          }}>
+            <div style={{
+              width: "12px",
+              height: "12px",
+              borderRadius: "50%",
+              backgroundColor: STAGES.find(s => s.key === level)?.color
+            }}></div>
+            Market Strategy Analysis
           </div>
-          <div style={{ color: "#555" }}>
-            The Market Strategy Index of <strong>{msiValue.toFixed(2)}</strong> indicates a{" "}
-            <strong style={{ color: STAGES.find(s => s.key === level)?.color }}>{level.toUpperCase()}</strong> strategy.
-            <br /><br />
+          
+          <div style={{ 
+            color: "#555",
+            marginBottom: "12px",
+            paddingBottom: "12px",
+            borderBottom: "1px solid #eee"
+          }}>
+            <strong>Market Strategy Index:</strong> {msiValue.toFixed(2)}<br/>
+            <strong>Classification:</strong> {level.toUpperCase()}<br/><br/>
+            
             {getInterpretation(msiValue, level)}
           </div>
+          
           <div style={{ 
-            marginTop: "10px", 
-            fontSize: "12px", 
-            color: "#888",
-            fontStyle: "italic",
-            borderTop: "1px solid #eee",
-            paddingTop: "8px"
+            color: "#555",
+            marginBottom: "12px",
+            paddingBottom: "12px",
+            borderBottom: "1px solid #eee"
           }}>
-            💡 <strong>How MSI is calculated:</strong><br />
-            • Sum of GDP of countries protected by patent family<br />
-            • 40% reduction for pending countries<br />
-            • Normalized to 1.0 for US-only granted patent
+            <strong>📈 Strategic Implications:</strong><br/>
+            {getStrategicImplications(msiValue, level)}
           </div>
+          
+          <div style={{ 
+            marginBottom: "8px", 
+            fontSize: "12px", 
+            color: "#666",
+            fontStyle: "italic"
+          }}>
+            💡 <strong>MSI Calculation Methodology:</strong><br />
+            • Sum of GDP of countries protected by patent family<br />
+            • 40% reduction for pending patent applications<br />
+            • Normalized to 1.0 for US-only granted patent<br />
+            • Considers both alive and dead granted patents
+          </div>
+          
+          <div style={{ 
+            fontSize: "11px", 
+            color: "#777",
+            backgroundColor: "#f9f9f9",
+            padding: "8px",
+            borderRadius: "4px"
+          }}>
+            <strong>Classification Thresholds:</strong><br />
+            • <span style={{ color: "#F14A37" }}>LOCAL:</span> MSI &lt; 0.6<br />
+            • <span style={{ color: "#F2D15F" }}>MAIN MARKETS:</span> 0.6 ≤ MSI &lt; 0.9<br />
+            • <span style={{ color: "#BDD248" }}>GLOBAL:</span> MSI ≥ 0.9
+          </div>
+          
           <div style={{ 
             marginTop: "8px", 
             fontSize: "11px", 
-            color: "#999",
-            fontStyle: "italic"
+            color: "#888",
+            textAlign: "center"
           }}>
-            <strong>Classification Thresholds:</strong><br />
-            • Local: MSI &lt; 0.6<br />
-            • Main Markets: 0.6 ≤ MSI &lt; 0.9<br />
-            • Global: MSI ≥ 0.9
+            Based on Innosabi Insight methodology
           </div>
         </div>
       )}
@@ -427,4 +509,4 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
   );
 };
 
-export default MarketStrategyCard;
+export default MarketStrategyCard; 
