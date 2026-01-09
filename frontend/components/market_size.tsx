@@ -15,7 +15,7 @@ const arrowBoxHeight = 24;
 const arrowHeight    = 15;
 
 /* ── COMPONENT ────────────────────────────────────── */
-export const MarketSizeCard: React.FC = () => {
+export const MarketSizeCard: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   const rowRef   = useRef<HTMLDivElement>(null);
   const cellRefs = useRef<HTMLDivElement[]>([]);
   const [arrowLeft, setArrowLeft] = useState(0);
@@ -129,6 +129,21 @@ export const MarketSizeCard: React.FC = () => {
     }
   };
 
+  const analysisText = (() => {
+    if (!sizeState || marketValue === null) return "Market size data not available.";
+    const lines: string[] = [];
+    lines.push(`Market value: ${formatMoney(marketValue)}`);
+    lines.push(`Market category: ${sizeState.toUpperCase()}`);
+    lines.push("");
+    lines.push(getInterpretation(sizeState, marketValue));
+    lines.push("");
+    lines.push("Classification Thresholds:");
+    lines.push("- Small: < $10M");
+    lines.push("- Medium: $10M - $100M");
+    lines.push("- Big: > $100M");
+    return lines.join("\n").trim();
+  })();
+
   return (
     <div
       style={{
@@ -167,6 +182,12 @@ export const MarketSizeCard: React.FC = () => {
           const rect = e.currentTarget.getBoundingClientRect();
           setCommentPosition({ x: rect.right, y: rect.top });
           setShowComment(true);
+
+          if (onHoverComment && sizeState && marketValue !== null) {
+            const pointText = `Market Size: ${sizeState.toUpperCase()} (${formatMoney(marketValue)})`;
+            const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+            onHoverComment(fullText);
+          }
         }}
         onMouseLeave={() => setShowComment(false)}
       >

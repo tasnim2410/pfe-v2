@@ -37,8 +37,9 @@ interface AnalysisResult {
   totalFilingsAnalyzed: number;
 }
 
-export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = ({
+export const InternationalProtectionMatrixChart: React.FC<{ port?: number; onHoverComment?: (text: string) => void }> = ({
   port: overridePort,
+  onHoverComment,
 }) => {
   const [api, setApi] = useState<ApiResponse | null>(null);
   const [firstFilingsTotal, setFirstFilingsTotal] = useState<number | null>(null);
@@ -201,10 +202,39 @@ export const InternationalProtectionMatrixChart: React.FC<{ port?: number }> = (
     datasets,
   };
 
+  const analysisText = (() => {
+    const lines: string[] = [];
+    if (analysis.topTotal?.length) {
+      lines.push(`Most Active: ${analysis.topTotal[0].country} has the most total filings (${analysis.topTotal[0].totalFromOrigin} patents).`);
+      lines.push("");
+    }
+    lines.push(`Overall Strategy: ${analysis.insight}`);
+    lines.push(`Overall Domestic Rate: ${analysis.overallDomesticRate}%`);
+    lines.push(`Total Filings Analyzed: ${analysis.totalFilingsAnalyzed}`);
+    return lines.join("\n").trim();
+  })();
+
   const options: any = {
     indexAxis: "y" as const,
     responsive: true,
     maintainAspectRatio: false,
+    onHover: (_event: any, activeElements: any[]) => {
+      if (!onHoverComment) return;
+      if (!activeElements || activeElements.length === 0) return;
+
+      const el = activeElements[0];
+      const idx = el.index;
+      const datasetIndex = el.datasetIndex ?? 0;
+
+      const origin = filteredOrigins?.[idx];
+      const filing = datasets?.[datasetIndex]?.label;
+      const value = datasets?.[datasetIndex]?.data?.[idx];
+      if (origin === undefined || filing === undefined || value === undefined) return;
+
+      const pointText = `${origin}: ${filing} → ${value}`;
+      const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+      onHoverComment(fullText);
+    },
     plugins: {
       tooltip: {
         mode: "nearest",

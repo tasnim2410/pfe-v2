@@ -6267,72 +6267,112 @@ def create_app():
 
     @app.route('/api/report/generate-pptx', methods=['POST'])
     def generate_pptx():
-        data = request.get_json()
-        images = data.get('images', [])
-        dimensions = data.get('dimensions', {})
-    
-        prs = Presentation()
-    
-        # Convert template dimensions to inches (1 inch = 72 points)
-        template_width_in = dimensions.get('width', 0) / 72
-        template_height_in = dimensions.get('height', 0) / 72
-    
-        # Set slide size based on template
-        prs.slide_width = Inches(template_width_in)
-        prs.slide_height = Inches(template_height_in)
-    
-        for img_obj in images:
-            img_b64 = img_obj.get('data')
-            img_width_px = img_obj.get('width', 0)
-            img_height_px = img_obj.get('height', 0)
+        try:
+            data = request.get_json()
+            images = data.get('images', [])
+            dimensions = data.get('dimensions', {})
         
-            # decode image
-            image_stream = io.BytesIO(
-                base64.b64decode(img_b64.split(',', 1)[1])
+            print(f"Received request with {len(images)} images and dimensions: {dimensions}")
+        
+            if not images:
+                return jsonify({"error": "No images provided"}), 400
+        
+            prs = Presentation()
+        
+            # Set default dimensions if not provided
+            width = dimensions.get('width', 1280)  # Default to PPT template width
+            height = dimensions.get('height', 720)  # Default to PPT template height
+        
+            # Convert points to inches (1 inch = 72 points)
+            width_in = width / 72
+            height_in = height / 72
+        
+            # Ensure dimensions are within PowerPoint limits
+            MIN_INCHES = 1
+            MAX_INCHES = 56
+        
+            width_in = max(MIN_INCHES, min(width_in, MAX_INCHES))
+            height_in = max(MIN_INCHES, min(height_in, MAX_INCHES))
+        
+            print(f"Setting slide size to: {width_in} x {height_in} inches")
+        
+            prs.slide_width = Inches(width_in)
+            prs.slide_height = Inches(height_in)
+        
+            for img_obj in images:
+                img_b64 = img_obj.get('data', '')
+                if not img_b64:
+                    continue
+                
+                try:
+                    # Clean the base64 string
+                    if ',' in img_b64:
+                        img_b64 = img_b64.split(',', 1)[1]
+                
+                    # Decode image
+                    image_data = base64.b64decode(img_b64)
+                    image_stream = io.BytesIO(image_data)
+                
+                    # Create slide
+                    slide = prs.slides.add_slide(prs.slide_layouts[5])  # Blank layout
+                
+                    # Calculate aspect ratio
+                    try:
+                        from PIL import Image
+                        pil_image = Image.open(image_stream)
+                        img_width_px, img_height_px = pil_image.size
+                        img_aspect = img_width_px / img_height_px
+                        image_stream.seek(0)  # Reset stream position
+                    except:
+                        # If PIL fails, use default aspect ratio
+                        img_aspect = width_in / height_in
+                
+                    slide_aspect = width_in / height_in
+                
+                    # Calculate dimensions to fit slide while maintaining aspect ratio
+                    if img_aspect > slide_aspect:
+                        # Image is wider than slide
+                        fit_width = width_in
+                        fit_height = width_in / img_aspect
+                        left = 0
+                        top = (height_in - fit_height) / 2
+                    else:
+                        # Image is taller than slide
+                        fit_height = height_in
+                        fit_width = height_in * img_aspect
+                        left = (width_in - fit_width) / 2
+                        top = 0
+                
+                    # Add image to slide
+                    slide.shapes.add_picture(
+                        image_stream,
+                        Inches(left),
+                        Inches(top),
+                        width=Inches(fit_width),
+                        height=Inches(fit_height)
+                    )
+                
+                except Exception as img_error:
+                    print(f"Error processing image: {img_error}")
+                    continue
+        
+            # Save presentation
+            output = io.BytesIO()
+            prs.save(output)
+            output.seek(0)
+        
+            return send_file(
+                output,
+                as_attachment=True,
+                download_name="report.pptx",
+                mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
         
-            # Calculate aspect ratios
-            img_aspect = img_width_px / img_height_px if img_height_px else 1
-            slide_aspect = template_width_in / template_height_in
-        
-            # Calculate dimensions to maintain aspect ratio
-            if img_aspect > slide_aspect:
-                # Image is wider than slide - fit to width
-                width = template_width_in
-                height = template_width_in / img_aspect
-                top = (template_height_in - height) / 2
-                left = 0
-            else:
-                # Image is taller than slide - fit to height
-                height = template_height_in
-                width = template_height_in * img_aspect
-                left = (template_width_in - width) / 2
-                top = 0
-            
-            slide = prs.slides.add_slide(prs.slide_layouts[5])
-        
-            # Add image centered with correct aspect ratio
-            slide.shapes.add_picture(
-                image_stream,
-                Inches(left),
-                Inches(top),
-                width=Inches(width),
-                height=Inches(height)
-            )
-
-
-        output = io.BytesIO()
-        prs.save(output)
-        output.seek(0)
-        return send_file(
-            output,
-            as_attachment=True,
-            download_name="report.pptx",
-            mimetype=(
-                "application/"
-                "vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-        )
+        except Exception as e:
+            print(f"Error in generate_pptx: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
         
         
 

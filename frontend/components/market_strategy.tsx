@@ -17,9 +17,10 @@ const arrowHeight    = 15;
 /* ── COMPONENT ─────────────────────────────────────────────────────────── */
 interface Props {
   port?: number;
+  onHoverComment?: (text: string) => void;
 }
 
-export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
+export const MarketStrategyCard: React.FC<Props> = ({ port, onHoverComment }) => {
   const [level, setLevel] = useState<Level>("main markets");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -163,30 +164,15 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
     };
   }, [level]);
 
-  const getInterpretation = (msi: number, level: Level): string => {
-    if (level === "local") {
-      return `The MSI of ${msi.toFixed(2)} indicates a LOCAL market strategy. This suggests the technology is protected primarily in specific countries or regions rather than globally. This could indicate:
-• Early-stage technology where market testing is ongoing
-• Niche applications with limited geographic relevance
-• Regulatory constraints limiting global protection
-• Cost-conscious IP strategy focusing on key markets
-• Technology with regional market preferences or standards`;
-    } else if (level === "main markets") {
-      return `The MSI of ${msi.toFixed(2)} indicates a MAIN MARKETS strategy. This suggests the technology is protected in key economic regions (typically US, EU, JP, CN). This often indicates:
-• Established technology with proven commercial value
-• Strategic focus on high-GDP markets with strong IP enforcement
-• Balanced approach between protection breadth and cost
-• Technology relevant to major industrial economies
-• Companies targeting leading markets while managing IP costs`;
-    } else {
-      return `The MSI of ${msi.toFixed(2)} indicates a GLOBAL market strategy. This suggests comprehensive worldwide patent protection. This typically indicates:
-• Breakthrough or foundational technology
-• Pharmaceutical or medical device inventions requiring global protection
-• Technologies with universal applications across all markets
-• Companies establishing dominant market positions
-• High-value inventions justifying global IP investment`;
-    }
-  };
+const getInterpretation = (msi: number, level: Level): string => {
+  if (level === "local") {
+    return `MSI ${msi.toFixed(2)} indicates LOCAL protection focused on specific regions. This suggests early-stage testing, niche applications, or cost-conscious IP strategies with regional focus.`;
+  } else if (level === "main markets") {
+    return `MSI ${msi.toFixed(2)} indicates MAIN MARKETS protection in key economic regions (US, EU, JP, CN). This shows established technology with strategic focus on high-value markets.`;
+  } else {
+    return `MSI ${msi.toFixed(2)} indicates GLOBAL worldwide protection. This suggests breakthrough technologies, pharmaceuticals, or high-value inventions justifying comprehensive IP investment.`;
+  }
+};
 
   const getStrategicImplications = (msi: number, level: Level): string => {
     if (level === "local") {
@@ -197,6 +183,18 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
       return "Implications: High barriers to entry globally, strong market exclusivity, potential for broad licensing revenue, significant competitive advantage.";
     }
   };
+
+  const analysisText = (() => {
+    if (msiValue === null) return "Market strategy data not available.";
+    const lines: string[] = [];
+    lines.push(`Market Strategy Index (MSI): ${msiValue.toFixed(2)}`);
+    lines.push(`Level: ${level.toUpperCase()}`);
+    lines.push("");
+    lines.push(getInterpretation(msiValue, level));
+    lines.push("");
+    lines.push(getStrategicImplications(msiValue, level));
+    return lines.join("\n").trim();
+  })();
 
   if (loading) {
     return (
@@ -268,6 +266,12 @@ export const MarketStrategyCard: React.FC<Props> = ({ port }) => {
             y: rect.bottom + 5 
           });
           setShowComment(true);
+
+          if (onHoverComment && msiValue !== null) {
+            const pointText = `Market Strategy: MSI ${msiValue.toFixed(2)} (${level.toUpperCase()})`;
+            const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+            onHoverComment(fullText);
+          }
         }}
         onMouseLeave={() => setShowComment(false)}
       >

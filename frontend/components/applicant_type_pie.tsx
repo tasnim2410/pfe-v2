@@ -19,7 +19,7 @@ type CoApplicantInfo = {
   total_applications: number;
 };
 
-export const ApplicantTypePie: React.FC = () => {
+export const ApplicantTypePie: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   const [summary, setSummary] = useState<ApplicantSummary | null>(null);
   const [coapplicant, setCoapplicant] = useState<CoApplicantInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,6 +28,41 @@ export const ApplicantTypePie: React.FC = () => {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; perc: number } | null>(null);
   const [showGeneralComment, setShowGeneralComment] = useState(false);
   const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 });
+
+  const analysisText = (() => {
+    if (!summary || !summary.labels.length) {
+      return "No applicant data available for analysis.";
+    }
+
+    const rows = summary.labels.map((label, index) => ({
+      label,
+      percentage: summary.percentages[index] || 0
+    }));
+    const sortedData = [...rows].sort((a, b) => b.percentage - a.percentage);
+    const top3 = sortedData.slice(0, 3);
+    const top3Total = top3.reduce((sum, item) => sum + item.percentage, 0);
+    const hasCoapplicant = coapplicant && coapplicant.coapplicant_rate > 0;
+
+    const lines: string[] = [];
+    if (top3.length >= 3) {
+      lines.push(
+        `The applicant distribution shows ${top3[0].label} as the largest group at ${top3[0].percentage.toFixed(1)}%, ` +
+        `followed by ${top3[1].label} (${top3[1].percentage.toFixed(1)}%) and ${top3[2].label} (${top3[2].percentage.toFixed(1)}%).`
+      );
+      lines.push("");
+      lines.push(`These top 3 applicant types account for ${top3Total.toFixed(1)}% of all applications.`);
+    } else {
+      lines.push("Insufficient applicant type categories for a full top-3 analysis.");
+    }
+
+    if (hasCoapplicant) {
+      lines.push("");
+      const rate = coapplicant!.coapplicant_rate;
+      const suffix = rate > 30 ? "frequent multi-party applications." : rate > 15 ? "moderate collaboration in applications." : "mostly single-party applications.";
+      lines.push(`The co-applicant rate of ${rate.toFixed(2)}% suggests ${suffix}`);
+    }
+    return lines.join("\n").trim();
+  })();
 
   /** ───────────────────────── data fetch ─────────────────────────── */
   useEffect(() => {
@@ -81,6 +116,11 @@ export const ApplicantTypePie: React.FC = () => {
         setHoverIdx(i);
         const bbox = (e.target as SVGPathElement).ownerSVGElement?.getBoundingClientRect();
         if (bbox) setTooltip({ x: tx + bbox.left, y: ty + bbox.top, label: labels[i], perc });
+        if (onHoverComment) {
+          const pointText = `${labels[i]}: ${perc.toFixed(1)}%`;
+          const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+          onHoverComment(fullText);
+        }
       };
 
       return (

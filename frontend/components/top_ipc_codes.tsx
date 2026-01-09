@@ -30,7 +30,7 @@ const stripLabel = (str: string) => str.replace(/[^A-Za-z0-9]/g, "");
 /* ------------------------------------------------------------------
    TopIPCCodes component
    ------------------------------------------------------------------ */
-export const TopIPCCodes: React.FC = () => {
+export const TopIPCCodes: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   /* ------------- Runtime state ------------- */
   const [data, setData] = useState<any>(null);          // API payload
   const [loading, setLoading] = useState(true);         // loading flag
@@ -99,6 +99,29 @@ export const TopIPCCodes: React.FC = () => {
   /* Use total patents from database (returned by API) */
   const totalPatents = data.total_patents || aggregatedCounts.reduce((sum, count) => sum + count, 0);
 
+  const analysisText = (() => {
+    if (sortedEntries.length === 0) return "No IPC code data available for analysis.";
+
+    const top3 = sortedEntries.slice(0, 3);
+    const totalTop3 = top3.reduce((sum, [, count]) => sum + count, 0);
+    const top3Percentage = totalPatents > 0 ? (totalTop3 / totalPatents * 100).toFixed(1) : "0.0";
+    const topCodePercentage = totalPatents > 0 ? (top3[0][1] / totalPatents * 100).toFixed(1) : "0.0";
+
+    const lines: string[] = [];
+    lines.push(`The most frequent IPC code is ${top3[0][0]} with ${topCodePercentage}% of all patents.`);
+    lines.push("");
+    lines.push(`The top 3 codes (${top3.map(([code]) => code).join(", ")}) account for ${top3Percentage}% of total patents.`);
+    lines.push("");
+    if (parseFloat(topCodePercentage) > 25) {
+      lines.push(`This indicates a strong focus on ${top3[0][0]} technology.`);
+    } else if (parseFloat(topCodePercentage) > 15) {
+      lines.push(`This shows moderate concentration in ${top3[0][0]}.`);
+    } else {
+      lines.push("Patent distribution is relatively balanced across technology areas.");
+    }
+    return lines.join("\n").trim();
+  })();
+
   /* Create lookup: { "H01M": { ipc_code, title, explanation, count } } */
   const ipcInfoMap: Record<string, any> = {};
   if (data.ipc_info) {
@@ -128,6 +151,23 @@ export const TopIPCCodes: React.FC = () => {
   const options = {
     indexAxis: "y" as const,
     responsive: true,
+    onHover: (_event: any, activeElements: any[]) => {
+      if (!onHoverComment) return;
+      if (!activeElements || activeElements.length === 0) return;
+
+      const el = activeElements[0];
+      const idx = el.index;
+
+      const code = cleanLabels[idx];
+      const count = aggregatedCounts[idx];
+      if (code === undefined || count === undefined) return;
+
+      const percentage = totalPatents > 0 ? ((count / totalPatents) * 100).toFixed(1) : "0.0";
+      const title = ipcInfoMap?.[code]?.title ? ` - ${ipcInfoMap[code].title}` : "";
+      const pointText = `${code}: ${count} patents (${percentage}%)${title}`;
+      const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+      onHoverComment(fullText);
+    },
     plugins: {
       legend: { display: false },
       title:  { display: false },

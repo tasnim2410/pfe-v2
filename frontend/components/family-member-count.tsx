@@ -24,8 +24,9 @@ interface TickContext {
   label: string;
 }
 
-export const FamilyMemberCountChart: React.FC<{ port?: number }> = ({
+export const FamilyMemberCountChart: React.FC<{ port?: number; onHoverComment?: (text: string) => void }> = ({
   port: overridePort,
+  onHoverComment,
 }) => {
   const [chartData, setChartData] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +124,26 @@ export const FamilyMemberCountChart: React.FC<{ port?: number }> = ({
     };
   }, [chartData]);
 
+  const analysisText = useMemo(() => {
+    if (!analysis) return "No data available for analysis.";
+    const lines: string[] = [];
+    lines.push(`Total family members: ${analysis.totalFamilyMembers}`);
+    lines.push(`Countries covered: ${analysis.countriesWithData}/${analysis.totalCountries}`);
+    lines.push(`Average per country: ${analysis.averagePerCountry}`);
+    if (analysis.topCountries?.length) {
+      lines.push("");
+      lines.push(
+        `Top countries: ${analysis.topCountries
+          .map(c => `${c.country} (${c.count})`)
+          .join(", ")}`
+      );
+      lines.push(`Top 3 concentration: ${analysis.top3Concentration}%`);
+    }
+    lines.push("");
+    lines.push(`Insight: ${analysis.insight}`);
+    return lines.join("\n").trim();
+  }, [analysis]);
+
   /* ─── Handle comment hover ─── */
   const handleCommentHover = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -169,6 +190,20 @@ export const FamilyMemberCountChart: React.FC<{ port?: number }> = ({
   const options: any = {
     responsive: true,
     maintainAspectRatio: false,
+    onHover: (_event: any, activeElements: any[]) => {
+      if (!onHoverComment) return;
+      if (!activeElements || activeElements.length === 0) return;
+
+      const el = activeElements[0];
+      const idx = el.index;
+      const label = chartData.labels?.[idx];
+      const count = chartData.datasets?.[0]?.data?.[idx];
+      if (label === undefined || count === undefined) return;
+
+      const pointText = `${label}: ${count} family members`;
+      const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+      onHoverComment(fullText);
+    },
     plugins: {
       legend: {
         display: false,

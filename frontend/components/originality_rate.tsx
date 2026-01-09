@@ -30,8 +30,8 @@ function getStage(originalityRate: number) {
   return { ...STAGES[STAGES.length - 1], index: STAGES.length - 1 };
 }
 
-type ChartProps = { width?: number; height?: number };
-export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
+type ChartProps = { width?: number; height?: number; onHoverComment?: (text: string) => void };
+export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height, onHoverComment }) => {
   const [originalityRate, setOriginalityRate] = useState<number | null>(null);
   const [totalPatents, setTotalPatents] = useState<number | null>(null);
   const [validPatents, setValidPatents] = useState<number | null>(null);
@@ -162,6 +162,18 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
 
   const stage = getStage(originalityRate);
 
+  const analysisText = (() => {
+    const lines: string[] = [];
+    lines.push(`Originality rate: ${(originalityRate * 100).toFixed(2)}%`);
+    if (totalPatents !== null && validPatents !== null) {
+      lines.push(`Valid patents: ${validPatents}/${totalPatents}`);
+    }
+    lines.push(`Category: ${stage.label}`);
+    lines.push("");
+    lines.push(getInterpretation(originalityRate, stage.label));
+    return lines.join("\n").trim();
+  })();
+
   return (
     <div style={{
       background: "#fff",
@@ -200,6 +212,12 @@ export const OriginalityDynamic: React.FC<ChartProps> = ({ width, height }) => {
           const rect = e.currentTarget.getBoundingClientRect();
           setCommentPosition({ x: rect.right, y: rect.top });
           setShowComment(true);
+
+          if (onHoverComment) {
+            const pointText = `Originality Dynamic: ${(originalityRate * 100).toFixed(2)}% (${stage.label})`;
+            const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+            onHoverComment(fullText);
+          }
         }}
         onMouseLeave={() => setShowComment(false)}
       >

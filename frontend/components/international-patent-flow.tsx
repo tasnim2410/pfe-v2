@@ -24,8 +24,9 @@ interface ApiResponse {
 /* ----- colour helper provided via shared lib (country-colors) ----- */
 
 /* ---------- component ---------- */
-export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
+export const InternationalPatentFlowChart: React.FC<{ port?: number, onHoverComment?: (text: string) => void }> = ({
   port: overridePort,
+  onHoverComment,
 }) => {
   const [api, setApi] = useState<ApiResponse | null>(null);
   const [loading, setLoad] = useState(true);
@@ -172,6 +173,22 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
     };
   }, [api]);
 
+  const analysisText = useMemo(() => {
+    if (!analysis) return "No data available for analysis.";
+    const lines: string[] = [];
+    if (analysis.topReceivers?.length) {
+      lines.push(`Top Receivers: ${analysis.topReceivers.map(r => r.receiver).join(", ")} receive ${analysis.top3Percentage}% of all patents.`);
+    }
+    if (analysis.mostDependent) {
+      lines.push("");
+      lines.push(`Most Dependent: ${analysis.mostDependent.receiver} gets ${analysis.mostDependent.mainPercentage.toFixed(1)}% of its patents from ${analysis.mostDependent.mainOrigin}.`);
+    }
+    lines.push("");
+    lines.push(`Market Concentration: ${analysis.insight}`);
+    lines.push(`Analysis based on ${analysis.totalPatents} patent flows across ${analysis.totalOrigins} origin countries and ${analysis.totalReceivers} receiving countries.`);
+    return lines.join("\n").trim();
+  }, [analysis]);
+
   /* ----- chart.js datasets ----- */
   const datasets = useMemo(() => {
     if (!api) return [];
@@ -223,6 +240,25 @@ export const InternationalPatentFlowChart: React.FC<{ port?: number }> = ({
         } 
       },
     },
+  };
+
+  // Export hover to reporting sticky comment
+  options.onHover = (_event: any, activeElements: any[]) => {
+    if (!onHoverComment) return;
+    if (!activeElements || activeElements.length === 0) return;
+
+    const el = activeElements[0];
+    const idx = el.index;
+    const datasetIndex = el.datasetIndex ?? 0;
+
+    const receiver = visibleReceivers?.[idx];
+    const origin = datasets?.[datasetIndex]?.label;
+    const value = datasets?.[datasetIndex]?.data?.[visibleReceiverIndices.indexOf(idx)] ?? datasets?.[datasetIndex]?.data?.[idx];
+    if (receiver === undefined || origin === undefined || value === undefined) return;
+
+    const pointText = `${receiver}: ${origin} → ${value}`;
+    const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+    onHoverComment(fullText);
   };
 
   /* ----- Handle comment hover ----- */

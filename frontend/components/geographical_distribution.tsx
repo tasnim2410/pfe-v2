@@ -43,7 +43,7 @@ type CountryData = {
   name: string;
 };
 
-export default function GeographicalDistribution() {
+export default function GeographicalDistribution({ onHoverComment }: { onHoverComment?: (text: string) => void }) {
   const [rows, setRows] = useState<CountryData[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [showComment, setShowComment] = useState(false);
@@ -108,6 +108,25 @@ export default function GeographicalDistribution() {
 
   const analysis = rows ? analyzeData(rows) : null;
 
+  const analysisText = (() => {
+    if (!analysis) return "No geographical data available.";
+    const lines: string[] = [];
+    lines.push(`Countries analyzed: ${analysis.countryCount}`);
+    lines.push(`Total patents (top 10): ${analysis.totalPatents}`);
+    if (analysis.topCountries?.length) {
+      lines.push("");
+      lines.push(
+        `Top 3: ${analysis.topCountries
+          .map(c => `${c.name || c.iso} (${c.count})`)
+          .join(", ")}`
+      );
+      lines.push(`Top 3 share: ${analysis.dominanceScore}%`);
+    }
+    lines.push("");
+    lines.push(`Insight: ${analysis.insight}`);
+    return lines.join("\n").trim();
+  })();
+
   // Color gradient based on count
   const getBarColor = (count: number, maxCount: number) => {
     const intensity = count / maxCount;
@@ -119,6 +138,15 @@ export default function GeographicalDistribution() {
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const countryName = COUNTRY_NAMES[label] || label;
+      if (onHoverComment && analysis) {
+        const value = payload?.[0]?.value;
+        if (typeof value === "number") {
+          const pct = analysis.totalPatents > 0 ? ((value / analysis.totalPatents) * 100).toFixed(1) : "0.0";
+          const pointText = `${countryName} (${label}): ${value} patents (${pct}%)`;
+          const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+          onHoverComment(fullText);
+        }
+      }
       return (
         <div style={{
           backgroundColor: 'rgba(35, 37, 38, 0.95)',

@@ -3,7 +3,7 @@
 
 "use client"
 
-import { useState, useEffect, useRef, memo } from "react"
+import { useState, useEffect, useRef, memo, useCallback } from "react"
 import { Trash, Plus, Lock, Unlock, Download, MessageCircle, FilePlus2, File } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -110,6 +110,7 @@ type StickyComment = {
   width: number
   height: number
   fontSize: number
+  fontFamily: string
   bold: boolean
   italic: boolean
   underline: boolean
@@ -164,17 +165,17 @@ const COMMENT_STYLE = {
 };
 
 // Render chart by id (memoized)
-const renderChart = (chartId: string | null) => {
+const renderChart = (chartId: string | null, onHoverComment?: (text: string) => void) => {
   if (!chartId) return null
   switch (chartId) {
     case "publication-trend":
-      return <PublicationTrends />
+      return <PublicationTrends onHoverComment={onHoverComment} />
     case "applicant-analysis":
-      return <ApplicantTypePie />
+      return <ApplicantTypePie onHoverComment={onHoverComment} />
     case "top-ipc":
-      return <TopIPCCodes />
+      return <TopIPCCodes onHoverComment={onHoverComment} />
     case "top-10-applicants":
-      return <Top10Applicants />
+      return <Top10Applicants onHoverComment={onHoverComment} />
     case "top-10-keywords":
       return <TopKeywords />
     case "patent-field-trends":
@@ -184,17 +185,17 @@ const renderChart = (chartId: string | null) => {
     case "cooccurrence-trends":
       return <CooccurrenceTrends />
     case "applicant-collaboration-network":
-      return <ApplicantCollaborationNetwork />
+      return <ApplicantCollaborationNetwork onHoverComment={onHoverComment} />
     case "family-member-count":
-      return <FamilyMemberCountChart />
+      return <FamilyMemberCountChart onHoverComment={onHoverComment} />
     case "family-size-distribution":
-      return <FamilySizeDistributionChart />
+      return <FamilySizeDistributionChart onHoverComment={onHoverComment} />
     case "international-protection-matrix":
-      return <InternationalProtectionMatrixChart />
+      return <InternationalProtectionMatrixChart onHoverComment={onHoverComment} />
     case "international-patent-flow":
-      return <InternationalPatentFlowChart />
+      return <InternationalPatentFlowChart onHoverComment={onHoverComment} />
     case "geographic-distribution":
-      return <GeographicalDistribution />
+      return <GeographicalDistribution onHoverComment={onHoverComment} />
     // Research (Scientific)
     case "publications-by-year":
       return <PublicationsByYear />
@@ -212,17 +213,17 @@ const renderChart = (chartId: string | null) => {
       return <ResearchCitationInequality />
     // Dashboard summary
     case "ipstat":
-      return <IpStatsBox />
+      return <IpStatsBox onHoverComment={onHoverComment} />
     case "originality":
-      return <OriginalityRate />
+      return <OriginalityRate onHoverComment={onHoverComment} />
     case "innovation":
-      return <InnovationCycle />
+      return <InnovationCycle onHoverComment={onHoverComment} />
     case "market-strategy":
-      return <MarketStrategyCard />
+      return <MarketStrategyCard onHoverComment={onHoverComment} />
     case "market-size":
-      return <MarketSizeCard />
+      return <MarketSizeCard onHoverComment={onHoverComment} />
     case "investment":
-      return <InvestmentDynamic />
+      return <InvestmentDynamic onHoverComment={onHoverComment} />
     case "summary":
       return <AnalysisSummaryCard />
     // Forecasting
@@ -241,7 +242,7 @@ const renderChart = (chartId: string | null) => {
   }
 }
 const ChartSlot = memo(
-  function ChartSlot({ chartId }: { chartId: string | null }) {
+  function ChartSlot({ chartId, slotId, onChartHover }: { chartId: string | null; slotId: string; onChartHover?: (slotId: string, chartId: string | null, text: string) => void }) {
     const [isLoading, setIsLoading] = useState(true);
     
     useEffect(() => {
@@ -263,11 +264,11 @@ const ChartSlot = memo(
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
           </div>
         )}
-        {renderChart(chartId)}
+        {renderChart(chartId, (text) => onChartHover?.(slotId, chartId, text))}
       </div>
     );
   },
-  (prev, next) => prev.chartId === next.chartId
+  (prev, next) => prev.chartId === next.chartId && prev.slotId === next.slotId && prev.onChartHover === next.onChartHover
 );
 
 const MIN_SLOT_WIDTH = 120
@@ -318,6 +319,9 @@ export default function Reporting() {
   const [showWarning, setShowWarning] = useState(false)
   const [isExporting, setIsExporting] = useState(false);
   const [chartLoading, setChartLoading] = useState<Record<string, boolean>>({});
+  const [autoExportHoverToComment, setAutoExportHoverToComment] = useState(false);
+  const hoverTextBySlotRef = useRef<Record<string, string>>({});
+  const hoverTimeoutBySlotRef = useRef<Record<string, number>>({});
   // When template picked, create first page
   useEffect(() => {
     if (selectedTemplate) {
@@ -423,6 +427,7 @@ export default function Reporting() {
         width: 180,
         height: 80,
         fontSize: 14,
+        fontFamily: "system-ui",
         bold: false,
         italic: false,
         underline: false,
@@ -434,6 +439,82 @@ export default function Reporting() {
   const removeComment = (commentId: string) => updateComments(comments => comments.filter(c => c.id !== commentId))
   const updateCommentText = (id: string, text: string) =>
     updateComments(comments => comments.map(c => c.id === id ? { ...c, text } : c))
+
+  const handleChartHover = useCallback((slotId: string, chartId: string | null, text: string) => {
+    if (!autoExportHoverToComment) return;
+    if (!text) return;
+    if (!selectedTemplate) return;
+    if (!activePage) return;
+
+    const key = `${activePageIdx}:${slotId}`;
+    if (hoverTextBySlotRef.current[key] === text) return;
+    hoverTextBySlotRef.current[key] = text;
+
+    const existingTimeout = hoverTimeoutBySlotRef.current[key];
+    if (existingTimeout) window.clearTimeout(existingTimeout);
+
+    hoverTimeoutBySlotRef.current[key] = window.setTimeout(() => {
+      const slot = activePage.layout.find(s => s.id === slotId);
+      if (!slot) return;
+
+      const chartTitle = chartId ? (availableCharts.find(c => c.id === chartId)?.title ?? chartId) : undefined;
+      const finalText = chartTitle ? `${chartTitle}\n${text}` : text;
+
+      const commentId = `auto-hover-${slotId}`;
+      const width = 240;
+      const approxLines = finalText.split("\n").length + Math.floor(finalText.length / 42);
+      const height = Math.max(90, Math.min(420, 28 + approxLines * 16));
+
+      const maxX = Math.max(0, selectedTemplate.dimensions.width - width);
+      const maxY = Math.max(0, selectedTemplate.dimensions.height - height);
+
+      let x = slot.x + slot.width + 16;
+      let y = slot.y;
+      if (x > maxX) x = slot.x;
+      if (x > maxX) x = maxX;
+      if (y > maxY) y = maxY;
+      if (x < 0) x = 0;
+      if (y < 0) y = 0;
+
+      updateComments(comments => {
+        const idx = comments.findIndex(c => c.id === commentId);
+        if (idx >= 0) {
+          const existing = comments[idx];
+          if (existing.text === finalText) {
+            if (existing.height >= height) return comments;
+            const updated = { ...existing, height };
+            return [...comments.slice(0, idx), updated, ...comments.slice(idx + 1)];
+          }
+          const updated = { ...existing, text: finalText, height: Math.max(existing.height, height) };
+          return [...comments.slice(0, idx), updated, ...comments.slice(idx + 1)];
+        }
+
+        return [
+          ...comments,
+          {
+            id: commentId,
+            text: finalText,
+            x,
+            y,
+            width,
+            height,
+            fontSize: 12,
+            fontFamily: "system-ui",
+            bold: false,
+            italic: false,
+            underline: false,
+            color: "#222"
+          }
+        ];
+      });
+    }, 150);
+  }, [autoExportHoverToComment, selectedTemplate, activePageIdx, activePage]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(hoverTimeoutBySlotRef.current).forEach(t => window.clearTimeout(t));
+    };
+  }, []);
   function updateCommentStyle(
     commentId: string,
     styleProp: keyof Omit<StickyComment,
@@ -533,6 +614,7 @@ const generatePdf = async () => {
       });
       
       const imgData = canvas.toDataURL('image/png');
+      if (!imgData) continue;
       const imgWidth = canvas.width;
       const imgHeight = canvas.height;
       
@@ -956,6 +1038,14 @@ const generatePpt = async () => {
         </Button>
       </>
     )}
+
+    <label className="ml-4 inline-flex items-center gap-2 text-sm select-none">
+      <Checkbox
+        checked={autoExportHoverToComment}
+        onCheckedChange={(v) => setAutoExportHoverToComment(v === true)}
+      />
+      Auto-export chart hover to comment
+    </label>
   </div>
 
   <div className="flex items-center space-x-2">
@@ -964,7 +1054,7 @@ const generatePpt = async () => {
       onClick={generatePdf}
       className="flex items-center"
       size="lg"
-      disabled={isLayoutUnlocked}
+      disabled={isLayoutUnlocked || isExporting}
       style={{ opacity: isLayoutUnlocked ? 0.7 : 1 }}
     >
       <Download size={18} className="mr-2" />
@@ -976,7 +1066,7 @@ const generatePpt = async () => {
       onClick={generatePpt}
       className="flex items-center"
       size="lg"
-      disabled={isLayoutUnlocked}
+      disabled={isLayoutUnlocked || isExporting}
       style={{ opacity: isLayoutUnlocked ? 0.7 : 1 }}
     >
       <Download size={18} className="mr-2" />
@@ -1070,7 +1160,7 @@ const generatePpt = async () => {
                               overflow: 'hidden',
                             }}
                           >
-                            <ChartSlot chartId={slot.chartId} />
+                            <ChartSlot chartId={slot.chartId} slotId={slot.id} onChartHover={handleChartHover} />
                           </div>
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -1126,7 +1216,7 @@ const generatePpt = async () => {
                         boxShadow: "0 1px 6px #0001",
                         display: "flex",
                         flexDirection: "column",
-                        pointerEvents: isLayoutUnlocked ? "auto" : "none"
+                        pointerEvents: "auto"
                       }}
                     >
                       {/* ── Toolbar ── */}
@@ -1140,6 +1230,16 @@ const generatePpt = async () => {
                             {[12,14,16,18,20,24,28].map(sz => (
                               <option key={sz} value={sz}>{sz}px</option>
                             ))}
+                          </select>
+                          <select
+                            value={sticky.fontFamily ?? "system-ui"}
+                            onChange={e => updateCommentStyle(sticky.id, 'fontFamily', e.target.value)}
+                            className="text-xs"
+                          >
+                            <option value="system-ui">System</option>
+                            <option value="Arial, sans-serif">Arial</option>
+                            <option value="Georgia, serif">Georgia</option>
+                            <option value="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace">Mono</option>
                           </select>
                           <button
                             onClick={() => updateCommentStyle(sticky.id, 'bold', !sticky.bold)}
@@ -1194,14 +1294,18 @@ const generatePpt = async () => {
                           boxShadow: "none",
                           minHeight: 32,
                           resize: "none",
-                          pointerEvents: isLayoutUnlocked ? "auto" : "none",
-                          color: COMMENT_STYLE.textColor,
+                          color: sticky.color || COMMENT_STYLE.textColor,
                           fontWeight: sticky.bold ? "bold" : "normal",
                           fontStyle: sticky.italic ? "italic" : "normal",
                           textDecoration: sticky.underline ? "underline" : "none",
                           fontSize: sticky.fontSize + "px",
+                          fontFamily: sticky.fontFamily || "system-ui",
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
+                          overflowY: "auto",
+                          lineHeight: 1.3,
                         }}
-                        disabled={!isLayoutUnlocked}
+                        readOnly={!isLayoutUnlocked}
                       />
                       {/* Resize handle */}
                       {isLayoutUnlocked && (

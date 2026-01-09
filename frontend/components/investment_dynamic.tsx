@@ -39,7 +39,7 @@ function getStage(growthRate: number) {
   return { ...STAGES[STAGES.length - 1], index: STAGES.length - 1 };
 }
 
-export const InvestmentDynamic: React.FC = () => {
+export const InvestmentDynamic: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   const [growthRate, setGrowthRate] = useState<number | null>(null);
   const [years, setYears] = useState<[number, number] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,16 +78,6 @@ export const InvestmentDynamic: React.FC = () => {
     return () => { isMounted = false; };
   }, []);
 
-  // Arrow position calculation
-  useEffect(() => {
-    if (growthRate === null) return;
-    if (!rowRef.current) return;
-    const stage = getStage(growthRate);
-    const rowWidth = rowRef.current.offsetWidth;
-    const cellWidth = rowWidth / STAGES.length;
-    setArrowLeft(cellWidth * stage.index + cellWidth / 2);
-  }, [growthRate]);
-
   const getInterpretation = (rate: number, stageLabel: string) => {
     if (rate < 0) {
       return "This indicates a decrease in investment activity, which may reflect market contraction, reduced investor confidence, or external economic pressures.";
@@ -107,6 +97,27 @@ export const InvestmentDynamic: React.FC = () => {
     return <LoadingSpinner text="Loading investment dynamic..." />;
 
   const stage = getStage(growthRate);
+
+  const analysisText = (() => {
+    const lines: string[] = [];
+    lines.push(`Investment growth rate: ${growthRate.toFixed(2)}%`);
+    if (years) lines.push(`Period: ${years[0]} - ${years[1]}`);
+    lines.push(`Stage: ${stage.label}`);
+    lines.push("");
+    lines.push(getInterpretation(growthRate, stage.label));
+    return lines.join("\n").trim();
+  })();
+
+  // Arrow position calculation
+  useEffect(() => {
+    if (growthRate === null) return;
+    if (!rowRef.current) return;
+    const stage = getStage(growthRate);
+
+    const rowWidth = rowRef.current.offsetWidth;
+    const cellWidth = rowWidth / STAGES.length;
+    setArrowLeft(cellWidth * stage.index + cellWidth / 2);
+  }, [growthRate]);
 
   return (
     <div style={{
@@ -146,6 +157,12 @@ export const InvestmentDynamic: React.FC = () => {
           const rect = e.currentTarget.getBoundingClientRect();
           setCommentPosition({ x: rect.right, y: rect.top });
           setShowComment(true);
+
+          if (onHoverComment) {
+            const pointText = `Investment Dynamic: ${growthRate.toFixed(2)}% (${stage.label})`;
+            const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+            onHoverComment(fullText);
+          }
         }}
         onMouseLeave={() => setShowComment(false)}
       >

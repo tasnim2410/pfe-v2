@@ -18,8 +18,9 @@ interface ApiResponse {
   labels: (number | string)[];
 }
 
-export const FamilySizeDistributionChart: React.FC<{ port?: number }> = ({
+export const FamilySizeDistributionChart: React.FC<{ port?: number; onHoverComment?: (text: string) => void }> = ({
   port: overridePort,
+  onHoverComment,
 }) => {
   const [chartData, setChartData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,6 +130,21 @@ export const FamilySizeDistributionChart: React.FC<{ port?: number }> = ({
     };
   }, [chartData]);
 
+  const analysisText = useMemo(() => {
+    if (!analysis) return "No data available for analysis.";
+    const lines: string[] = [];
+    lines.push(`Average family size: ${analysis.averageFamilySize}`);
+    lines.push(`Most common size: ${analysis.mostCommonSize} (${analysis.mostCommonCount} families)`);
+    lines.push(`Concentration: ${analysis.concentrationPercentage}%`);
+    if (analysis.medianFamilySize > 0) {
+      lines.push(`Median family size: ${analysis.medianFamilySize}`);
+    }
+    lines.push("");
+    lines.push(`Insight: ${analysis.insight}`);
+    lines.push(`Total families analyzed: ${analysis.totalFamilies}`);
+    return lines.join("\n").trim();
+  }, [analysis]);
+
   /* ─── Handle comment hover ─── */
   const handleCommentHover = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -175,6 +191,20 @@ export const FamilySizeDistributionChart: React.FC<{ port?: number }> = ({
   const options: any = {
     responsive: true,
     maintainAspectRatio: false,
+    onHover: (_event: any, activeElements: any[]) => {
+      if (!onHoverComment) return;
+      if (!activeElements || activeElements.length === 0) return;
+
+      const el = activeElements[0];
+      const idx = el.index;
+      const label = data.labels?.[idx];
+      const count = data.datasets?.[0]?.data?.[idx];
+      if (label === undefined || count === undefined) return;
+
+      const pointText = `Family size ${label}: ${count} families`;
+      const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+      onHoverComment(fullText);
+    },
     plugins: {
       legend: { display: false },
       tooltip: {

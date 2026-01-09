@@ -169,7 +169,7 @@ function getNetworkAnalysis(edges: any[]) {
   };
 }
 
-const ApplicantCollaborationNetwork: React.FC = () => {
+const ApplicantCollaborationNetwork: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -268,6 +268,25 @@ const ApplicantCollaborationNetwork: React.FC = () => {
     }
   };
 
+  const analysisText = (() => {
+    if (!analysis) return "No collaboration data available.";
+    const lines: string[] = [];
+    lines.push(`Network Pattern: ${getDominantTypeDescription(analysis.dominantType)}`);
+    lines.push(`Share: ${analysis.percentage}% (${analysis.dominantCount} of ${analysis.totalConnections} connections)`);
+    lines.push("");
+    lines.push("Collaboration Breakdown:");
+    lines.push(`- Company-Inventor: ${analysis.companyInventorCount}`);
+    if (analysis.companyCompanyCount > 0) lines.push(`- Company-Company: ${analysis.companyCompanyCount}`);
+    if (analysis.companyUniversityCount > 0) lines.push(`- Company-University: ${analysis.companyUniversityCount}`);
+    if (analysis.strongestConnection) {
+      lines.push("");
+      lines.push(
+        `Strongest Connection: ${analysis.strongestConnection.source} ↔ ${analysis.strongestConnection.target} (${analysis.strongestConnection.weight})`
+      );
+    }
+    return lines.join("\n").trim();
+  })();
+
   return (
     <div style={cardStyle}>
       {/* Header with title and info icon */}
@@ -303,6 +322,12 @@ const ApplicantCollaborationNetwork: React.FC = () => {
             const rect = e.currentTarget.getBoundingClientRect();
             setCommentPosition({ x: rect.right, y: rect.top });
             setShowComment(true);
+
+            if (onHoverComment) {
+              const pointText = "Collaboration Network";
+              const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+              onHoverComment(fullText);
+            }
           }}
           onMouseLeave={() => setShowComment(false)}
         >
@@ -353,6 +378,12 @@ const ApplicantCollaborationNetwork: React.FC = () => {
                     x,
                     y
                   });
+
+                  if (onHoverComment) {
+                    const pointText = `${edge.source} ↔ ${edge.target}: ${edge.weight} collaboration${edge.weight > 1 ? "s" : ""}`;
+                    const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+                    onHoverComment(fullText);
+                  }
                 }}
                 onMouseLeave={() => setHoverEdge(null)}
                 style={{ cursor: "pointer" }}
@@ -401,6 +432,12 @@ const ApplicantCollaborationNetwork: React.FC = () => {
                     x,
                     y
                   });
+
+                  if (onHoverComment) {
+                    const pointText = `${node.type}: ${connections} total connection${connections !== 1 ? "s" : ""}`;
+                    const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+                    onHoverComment(fullText);
+                  }
                 }}
                 onMouseLeave={() => setHoverNode(null)}
                 style={{ cursor: "pointer" }}

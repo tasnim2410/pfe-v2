@@ -38,7 +38,7 @@ function getStage(value: number) {
   return STAGES[0];
 }
 
-export const InnovationCycle: React.FC = () => {
+export const InnovationCycle: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   const [percentage, setPercentage] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showComment, setShowComment] = useState(false);
@@ -112,6 +112,15 @@ export const InnovationCycle: React.FC = () => {
 
   const activeStage = getStage(percentage);
   const activeIndex = STAGES.findIndex((s) => s.label === activeStage.label);
+
+  const analysisText = (() => {
+    const lines: string[] = [];
+    lines.push(`Top-10 actors share: ${percentage.toFixed(2)}%`);
+    lines.push(`Stage: ${activeStage.label}`);
+    lines.push("");
+    lines.push(getInterpretation(percentage, activeStage.label));
+    return lines.join("\n").trim();
+  })();
 
   // --- Bigger SVG, more center space, but overall smaller card ---
   const size = 245;
@@ -195,6 +204,12 @@ export const InnovationCycle: React.FC = () => {
           const rect = e.currentTarget.getBoundingClientRect();
           setCommentPosition({ x: rect.right, y: rect.top });
           setShowComment(true);
+
+          if (onHoverComment) {
+            const pointText = `Innovation Cycle: ${percentage.toFixed(2)}% (${activeStage.label})`;
+            const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+            onHoverComment(fullText);
+          }
         }}
         onMouseLeave={() => setShowComment(false)}
       >

@@ -36,8 +36,8 @@ interface MarketMetrics {
   mean_value: number;
 }
 
-type ChartProps = { width?: number; height?: number };
-export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
+type ChartProps = { width?: number; height?: number; onHoverComment?: (text: string) => void };
+export const IpStatsBox: React.FC<ChartProps> = ({ width, height, onHoverComment }) => {
   const [metrics, setMetrics] = useState<MarketMetrics | null>(null);
   const [alivePatents, setAlivePatents] = useState<number | null>(null);
   const [totalFamilyMembers, setTotalFamilyMembers] = useState<number | null>(null);
@@ -123,6 +123,8 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
   Based on patent age and jurisdiction costs.`;
   };
 
+  const analysisText = metrics ? getInterpretation(metrics) : "";
+
   if (error) {
     return <div style={{ color: "red" }}>{error}</div>;
   }
@@ -169,6 +171,12 @@ export const IpStatsBox: React.FC<ChartProps> = ({ width, height }) => {
           const rect = e.currentTarget.getBoundingClientRect();
           setCommentPosition({ x: rect.right, y: rect.top });
           setShowComment(true);
+
+          if (onHoverComment && metrics) {
+            const pointText = `IP Market Metrics: Rate ${metrics.market_rate.toFixed(2)}, Mean ${formatMoney(metrics.mean_value)}, Total ${formatMoney(metrics.market_value)}`;
+            const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+            onHoverComment(fullText);
+          }
         }}
         onMouseLeave={() => setShowComment(false)}
       >

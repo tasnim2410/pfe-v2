@@ -6,7 +6,7 @@ import { Chart, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend }
 // Register necessary Chart.js components
 Chart.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
-export const Top10Applicants: React.FC = () => {
+export const Top10Applicants: React.FC<{ onHoverComment?: (text: string) => void }> = ({ onHoverComment }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -46,6 +46,39 @@ export const Top10Applicants: React.FC = () => {
   }
   if (!data) return null;
 
+  const analysisText = (() => {
+    if (!data || !data.labels || !data.datasets || !data.datasets[0]?.data) {
+      return "No applicant data available for analysis.";
+    }
+
+    const labels = data.labels as string[];
+    const patentCounts = data.datasets[0].data as number[];
+    const top3Count = Math.min(3, labels.length);
+
+    const topApplicants: { name: string; count: number; rank: number }[] = [];
+    for (let i = 0; i < top3Count; i++) {
+      topApplicants.push({ name: labels[i], count: patentCounts[i], rank: i + 1 });
+    }
+
+    const top1Percentage = data.top10_total > 0 ? (topApplicants[0].count / data.top10_total * 100).toFixed(1) : "0";
+
+    const lines: string[] = [];
+    lines.push("The top applicants in this technology are:");
+    lines.push("");
+    for (const a of topApplicants) {
+      lines.push(`${a.rank}. ${a.name}: ${a.count} patents`);
+    }
+    lines.push("");
+    lines.push(`Together, these top 3 applicants hold ${top1Percentage}% of patents among the top 10.`);
+    lines.push("");
+    if (data.percentage !== undefined) {
+      const pct = String(data.percentage);
+      const level = parseFloat(pct) > 50 ? "strong" : parseFloat(pct) > 30 ? "moderate" : "some";
+      lines.push(`The top 10 applicants represent ${pct}% of the top 100 applicants, showing ${level} concentration of patent ownership.`);
+    }
+    return lines.join("\n").trim();
+  })();
+
   // Prepare Chart Data
   const chartData = {
     labels: data.labels,
@@ -61,6 +94,21 @@ export const Top10Applicants: React.FC = () => {
     indexAxis: 'y' as const,
     responsive: true,
     maintainAspectRatio: false,
+    onHover: (_event: any, activeElements: any[]) => {
+      if (!onHoverComment) return;
+      if (!activeElements || activeElements.length === 0) return;
+
+      const el = activeElements[0];
+      const idx = el.index;
+
+      const label = data?.labels?.[idx];
+      const count = data?.datasets?.[0]?.data?.[idx];
+      if (label === undefined || count === undefined) return;
+
+      const pointText = `${label}: ${count} patents`;
+      const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+      onHoverComment(fullText);
+    },
     layout: {
       padding: {
         left: 20

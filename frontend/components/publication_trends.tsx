@@ -19,8 +19,8 @@ const CHART_BG = "#fff";
 const ACCENT = "#232526";
 const HIGHLIGHT = "#BDD248";
 
-type ChartProps = { width?: number; height?: number };
-const PublicationTrends: React.FC<ChartProps> = ({ width, height }) => {
+type ChartProps = { width?: number; height?: number; onHoverComment?: (text: string) => void };
+const PublicationTrends: React.FC<ChartProps> = ({ width, height, onHoverComment }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -126,6 +126,25 @@ const PublicationTrends: React.FC<ChartProps> = ({ width, height }) => {
   // Analyze trends for the comment
   const analysis = analyzeTrends(data.labels, data.datasets[0]);
 
+  const analysisText = (() => {
+    const lines: string[] = [];
+    lines.push(`Over ${analysis.totalYears} years of data, the trend shows ${analysis.overallTrend}.`);
+    if (analysis.peakYear) {
+      lines.push("");
+      lines.push(`The peak year was ${analysis.peakYear} with ${analysis.peakValue} patents.`);
+    }
+    lines.push("");
+    if (analysis.significantRises?.length) {
+      lines.push("Significant Publication Rises:");
+      for (const rise of analysis.significantRises) {
+        lines.push(`${rise.year}: Increased by ${rise.change} patents (${rise.percentage}%) from ${rise.prevYear}`);
+      }
+    } else {
+      lines.push("No significant year-over-year rises detected (threshold: ≥10 patents or ≥25% increase).");
+    }
+    return lines.join("\n").trim();
+  })();
+
   // Chart.js data
   const chartData = {
     labels: data.labels,
@@ -144,6 +163,22 @@ const PublicationTrends: React.FC<ChartProps> = ({ width, height }) => {
   // Chart.js options
   const options = {
     responsive: true,
+    onHover: (_event: any, activeElements: any[]) => {
+      if (!onHoverComment) return;
+      if (!activeElements || activeElements.length === 0) return;
+
+      const el = activeElements[0];
+      const idx = el.index;
+      const datasetIndex = el.datasetIndex ?? 0;
+
+      const year = data?.labels?.[idx];
+      const value = data?.datasets?.[datasetIndex]?.data?.[idx];
+      if (year === undefined || value === undefined) return;
+
+      const pointText = `${year}: ${value} patents`;
+      const fullText = analysisText ? `${pointText}\n\n${analysisText}` : pointText;
+      onHoverComment(fullText);
+    },
     plugins: {
       legend: { display: false },
       title: {
